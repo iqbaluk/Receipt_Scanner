@@ -28,6 +28,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
+import 'utils/text_normalizers.dart';
 
 class Project {
   final int? id;
@@ -1118,7 +1119,7 @@ class DatabaseService {
     final db = await _open();
     final args = <dynamic>[];
     final duplicateParts = <String>[];
-    final normalizedInvoice = _normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isNotEmpty) {
       final invoiceSql = _normalisedInvoiceSql('invoice_number');
       final supplierSql = _normalisedSupplierSql('supplier');
@@ -1129,7 +1130,7 @@ class DatabaseService {
       );
       args.addAll([
         normalizedInvoice,
-        _normaliseSupplier(supplier),
+        normaliseSupplier(supplier),
         Receipt.formatDate(date),
       ]);
     }
@@ -1137,7 +1138,7 @@ class DatabaseService {
     final supplierSql = _normalisedSupplierSql('supplier');
     var fallback = '($supplierSql = ? AND date = ? AND ABS(gross - ?) < 0.005';
     final fallbackArgs = <dynamic>[
-      _normaliseSupplier(supplier),
+      normaliseSupplier(supplier),
       Receipt.formatDate(date),
       gross,
     ];
@@ -1163,16 +1164,6 @@ class DatabaseService {
     return rows.map((r) => Receipt.fromMap(r)).toList();
   }
 
-  static String _normaliseInvoiceNumber(String? value) {
-    if (value == null) return '';
-    return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
-  }
-
-  static String _normaliseSupplier(String? value) {
-    if (value == null) return '';
-    return value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
-  }
-
   static String _normalisedInvoiceSql(String expr) {
     return "UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE($expr, '')), ' ', ''), '-', ''), '/', ''), '_', ''), '.', ''))";
   }
@@ -1186,7 +1177,7 @@ class DatabaseService {
     int? projectId,
     int? excludeId,
   }) async {
-    final normalizedInvoice = _normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isEmpty) return null;
     final db = await _open();
     final invoiceSql = _normalisedInvoiceSql('invoice_number');
@@ -1217,7 +1208,7 @@ class DatabaseService {
     required DateTime date,
     int? excludeId,
   }) async {
-    final normalizedInvoice = _normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isEmpty) return null;
     final db = await _open();
     final invoiceSql = _normalisedInvoiceSql('invoice_number');
@@ -1229,7 +1220,7 @@ class DatabaseService {
     ];
     final args = <dynamic>[
       normalizedInvoice,
-      _normaliseSupplier(supplier),
+      normaliseSupplier(supplier),
       Receipt.formatDate(date),
     ];
     if (excludeId != null) {

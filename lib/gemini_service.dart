@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'utils/ai_extraction_helpers.dart';
 
 /// The result of a scan attempt - either success with data, or failure with reason.
 class ScanResult {
@@ -347,8 +348,8 @@ class GeminiService {
 
       // ---- Build the prompt ----
       // We give Gemini a clear schema and rules so it returns predictable JSON.
-      final examples = _categoryExamples(categories);
-      final hints = _categoryDecisionHints(categories);
+      final examples = categoryExamplesPrompt(categories);
+      final hints = categoryDecisionHintsPrompt(categories);
       final prompt = '''
 You are extracting structured data from a receipt or invoice image for a UK property renovation business.
 
@@ -433,11 +434,11 @@ $hints
       }
 
       // ---- Strings ----
-      String? invoiceNumber = _cleanString(
+      String? invoiceNumber = cleanNullableString(
         json['invoice_number'] ?? json['invoiceNumber'] ?? json['invoice_no'],
       );
-      String? supplier = _cleanString(json['supplier']);
-      String? notes = _cleanString(json['notes']);
+      String? supplier = cleanNullableString(json['supplier']);
+      String? notes = cleanNullableString(json['notes']);
 
       if (strictPrivacyGuard) {
         invoiceNumber = _sanitizeInvoiceNumber(invoiceNumber);
@@ -446,11 +447,11 @@ $hints
       }
 
       // ---- Category - validate against allowed list ----
-      String? category = _cleanString(json['category']);
+      String? category = cleanNullableString(json['category']);
       if (category != null && !categories.contains(category)) {
         category = categories.contains('Other') ? 'Other' : categories.first;
       }
-      double? categoryConfidence = _parseDouble(
+      double? categoryConfidence = parseLooseDouble(
         json['category_confidence'] ??
             json['categoryConfidence'] ??
             json['category_score'],
@@ -461,9 +462,9 @@ $hints
       }
 
       // ---- Numbers ----
-      double? vat = _parseDouble(json['vat']);
-      double? gross = _parseDouble(json['gross']);
-      double? net = _parseDouble(json['net']);
+      double? vat = parseLooseDouble(json['vat']);
+      double? gross = parseLooseDouble(json['gross']);
+      double? net = parseLooseDouble(json['net']);
 
       // If gross is present but net isn't, calculate it
       if (gross != null && net == null && vat != null) {
@@ -488,22 +489,6 @@ $hints
         'Could not parse Gemini response: ${e.toString()}',
       );
     }
-  }
-
-  static String? _cleanString(dynamic value) {
-    if (value == null) return null;
-    final str = value.toString().trim();
-    if (str.isEmpty || str.toLowerCase() == 'null') return null;
-    return str;
-  }
-
-  static double? _parseDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-    final str =
-        value.toString().replaceAll('£', '').replaceAll(RegExp(r'[$,\\s]'), '');
-    if (str.isEmpty || str.toLowerCase() == 'null') return null;
-    return double.tryParse(str);
   }
 
   static String? _sanitizeInvoiceNumber(String? value) {
@@ -538,102 +523,4 @@ $hints
         _addressLineRegex.hasMatch(value);
   }
 
-  static String _categoryExamples(List<String> categories) {
-    final lines = <String>[];
-    void addIfPresent(String category, String example) {
-      if (categories.contains(category)) {
-        lines.add('- $example -> "$category"');
-      }
-    }
-
-    addIfPresent(
-        'Material', 'B&Q, Travis Perkins, Wickes, Selco, Howdens, Screwfix');
-    addIfPresent('Subcontractor', 'A plumber, electrician, builder invoice');
-    addIfPresent('Utility Bills', 'Gas, electricity, water, council tax');
-    addIfPresent('Travel', 'Train, taxi, parking, fuel');
-    addIfPresent('Insurance', 'Public liability or building insurance');
-    addIfPresent('Sundries', 'Tea, biscuits, small consumables');
-    addIfPresent('Other', 'Anything that does not fit the other categories');
-
-    if (lines.isEmpty) {
-      return '- Use the closest matching configured category.';
-    }
-    return lines.join('\n');
-  }
-
-  static String _categoryDecisionHints(List<String> categories) {
-    final insuranceCategory = _findCategoryByKeywords(
-      categories,
-      const ['insurance'],
-    );
-    final serviceCategory = _findCategoryByKeywords(
-      categories,
-      const ['subcontractor', 'professional', 'labour', 'labor', 'service'],
-    );
-    final materialCategory = _findCategoryByKeywords(
-      categories,
-      const ['material', 'sundries', 'supply'],
-    );
-    final travelCategory = _findCategoryByKeywords(
-      categories,
-      const ['travel', 'transport', 'fuel', 'mileage', 'parking'],
-    );
-    final utilitiesCategory = _findCategoryByKeywords(
-      categories,
-      const ['utility', 'utilities', 'electric', 'water', 'gas'],
-    );
-    final otherCategory = _findCategoryByKeywords(
-      categories,
-      const ['other', 'misc'],
-    );
-
-    final lines = <String>[];
-    if (insuranceCategory != null) {
-      lines.add(
-        '- Use "$insuranceCategory" ONLY for policy/premium/cover documents from insurers or brokers.',
-      );
-      final fallback = serviceCategory ?? otherCategory ?? categories.first;
-      lines.add(
-        '- Inspection/survey/certificate/assessment/compliance jobs are NOT insurance; prefer "$fallback".',
-      );
-    }
-    if (serviceCategory != null) {
-      lines.add(
-        '- Labour/service/trade callout invoices (inspection, electrician, plumber, fitting, repair) -> "$serviceCategory".',
-      );
-    }
-    if (materialCategory != null) {
-      lines.add(
-        '- Goods and parts purchases (timber, paint, tools, hardware, consumables) -> "$materialCategory".',
-      );
-    }
-    if (travelCategory != null) {
-      lines.add(
-        '- Train/taxi/fuel/parking/tolls/mileage receipts -> "$travelCategory".',
-      );
-    }
-    if (utilitiesCategory != null) {
-      lines.add(
-        '- Electricity, gas, water, telecom or council bills -> "$utilitiesCategory".',
-      );
-    }
-    if (lines.isEmpty) {
-      final fallback = otherCategory ?? categories.first;
-      lines.add('- If uncertain, use "$fallback" and avoid guessing.');
-    }
-    return lines.join('\n');
-  }
-
-  static String? _findCategoryByKeywords(
-    List<String> categories,
-    List<String> keywords,
-  ) {
-    for (final category in categories) {
-      final lower = category.toLowerCase();
-      for (final keyword in keywords) {
-        if (lower.contains(keyword)) return category;
-      }
-    }
-    return null;
-  }
 }
