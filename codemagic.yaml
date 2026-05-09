@@ -1,0 +1,86 @@
+workflows:
+  ios-development-build:
+    name: iOS Development Build (TestFlight)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      # Replace with your App Store Connect integration name in Codemagic UI.
+      app_store_connect: APP_STORE_CONNECT
+    environment:
+      flutter: stable
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.example.receiptScanner
+    scripts:
+      - name: Set up code signing settings
+        script: |
+          xcode-project use-profiles
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Build signed IPA for internal testing
+        script: |
+          flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
+  ios-shorebird-release:
+    name: iOS Shorebird Release (TestFlight)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      # Replace with your App Store Connect integration name in Codemagic UI.
+      app_store_connect: APP_STORE_CONNECT
+    environment:
+      flutter: stable
+      xcode: latest
+      groups:
+        # Add SHOREBIRD_TOKEN to this group in Codemagic Team/App variables.
+        - shorebird
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.example.receiptScanner
+    scripts:
+      - name: Install Shorebird CLI
+        script: |
+          curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/shorebirdtech/install/main/install.sh -sSf | bash
+          echo PATH="$HOME/.shorebird/bin:$PATH" >> $CM_ENV
+      - name: Verify Shorebird project setup
+        script: |
+          if [ ! -f shorebird.yaml ]; then
+            echo "shorebird.yaml is missing. Run 'shorebird init' locally and commit it."
+            exit 1
+          fi
+      - name: Set up code signing settings
+        script: |
+          xcode-project use-profiles --custom-export-options={\"manageAppVersionAndBuildNumber\":false}
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Build Shorebird release and upload to TestFlight
+        script: |
+          shorebird release ios \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

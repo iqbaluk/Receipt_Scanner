@@ -1,0 +1,2 @@
+cd C:\Users\iqbal\Projects\receipt_scanner
+   flutter run -d 46061FDAS007U3
