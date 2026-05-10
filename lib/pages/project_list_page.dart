@@ -53,6 +53,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
     await _loadProjects();
   }
 
+  Future<void> _openCombinedReport() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CombinedReportPage(
+          initialRange: ExportRange.allTime(),
+          initialDateBasis: DateBasis.invoiceDate,
+        ),
+      ),
+    );
+    await _loadProjects();
+  }
+
   Future<void> _openHistoryFor(Project project) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -330,6 +342,11 @@ class _ProjectListPageState extends State<ProjectListPage> {
         title: const Text('Projects'),
         actions: [
           IconButton(
+            onPressed: _openCombinedReport,
+            icon: const Icon(Icons.table_chart),
+            tooltip: 'Combined report',
+          ),
+          IconButton(
             onPressed: _openAllHistory,
             icon: const Icon(Icons.manage_search),
             tooltip: 'Invoice list',
@@ -489,7 +506,7 @@ class _ProjectCard extends StatelessWidget {
       if (project.address != null) project.address!,
       '${project.receiptCount} receipts',
       if (budget != null) '£${budget.toStringAsFixed(2)} budget',
-    ].join(' · ');
+    ].join(' £ ');
 
     return SizedBox(
       width: 220,
@@ -621,3 +638,4 @@ class _ProjectCard extends StatelessWidget {
     );
   }
 }
+

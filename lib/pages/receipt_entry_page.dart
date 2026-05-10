@@ -23,7 +23,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
 
   Uint8List? _imageBytes;
   String? _imageFileName;
-  String? _imagePath;
 
   bool _isScanning = false;
   bool _isSaving = false;
@@ -170,7 +169,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
     setState(() {
       _imageBytes = bytes;
       _imageFileName = file.name;
-      _imagePath = file.path;
     });
     _showStatus(
       'Image loaded. You can scan with Gemini.',
@@ -181,7 +179,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
     setState(() {
       _imageBytes = null;
       _imageFileName = null;
-      _imagePath = null;
     });
   }
 
@@ -533,7 +530,7 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
                     '${existing.supplier}\n'
                     '${_invoiceText(existing)}'
                     'Date: ${DateFormat('dd/MM/yyyy').format(existing.date)}\n'
-                    'Gross: £${existing.gross.toStringAsFixed(2)}',
+                    'Gross: ${formatAppMoney(existing.gross)}',
                   ),
                 ],
               ),
@@ -582,7 +579,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       _categoryReviewConfirmed = false;
       _imageBytes = null;
       _imageFileName = null;
-      _imagePath = null;
     });
     if (!silent) _showStatus('Form cleared');
   }
@@ -1222,7 +1218,7 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
             ),
             const SizedBox(width: 8),
             Text(
-              '£${r.gross.toStringAsFixed(2)}',
+              formatAppMoney(r.gross),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
@@ -1335,3 +1331,4 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
     );
   }
 }
+

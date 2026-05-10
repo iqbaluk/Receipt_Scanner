@@ -309,7 +309,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Delete this receipt?'),
         content: Text(
-          '${_current.supplier} — £${_current.gross.toStringAsFixed(2)}\\n\\nThis cannot be undone.',
+          '${_current.supplier} ·${_current.gross.toStringAsFixed(2)}\\n\\nThis cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -382,7 +382,12 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
           ],
         ),
         body: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            _editing ? 132 : 16,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -664,10 +669,15 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                 ),
               ),
-              const SizedBox(height: 24),
-              if (_editing)
-                SizedBox(
-                  height: 48,
+            ],
+          ),
+        ),
+        bottomNavigationBar: !_editing
+            ? null
+            : SafeArea(
+                minimum: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: SizedBox(
+                  height: 52,
                   child: ElevatedButton.icon(
                     onPressed: _saving ? null : _save,
                     icon: _saving
@@ -680,10 +690,9 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                     label: Text(_saving ? 'Saving...' : 'Save changes'),
                   ),
                 ),
-            ],
-          ),
-        ),
+              ),
       ),
     );
   }
 }
+

@@ -1,4 +1,4 @@
-part of '../main.dart';
+﻿part of '../main.dart';
 
 class ReceiptHistoryPage extends StatefulWidget {
   final Project? project;
@@ -73,7 +73,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return true;
     final numericQuery =
-        double.tryParse(q.replaceAll('£', '').replaceAll(',', '').trim());
+        double.tryParse(q.replaceAll('Ã‚Â£', '').replaceAll(',', '').trim());
     final amountMatches = numericQuery != null &&
         ((receipt.gross - numericQuery).abs() < 0.005 ||
             (receipt.vat - numericQuery).abs() < 0.005 ||
@@ -87,7 +87,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
       receipt.category,
       Receipt.formatDate(receipt.date),
       Receipt.formatDate(receipt.createdAt),
-      DateFormat('dd/MM/yyyy').format(receipt.date),
+      DateFormat('dd/MM/yy').format(receipt.date),
       DateFormat('dd/MM/yyyy').format(receipt.createdAt),
       (receipt.scanNo ?? receipt.id ?? 0).toString(),
       receipt.gross.toStringAsFixed(2),
@@ -262,7 +262,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
   double get _totalGross =>
       _receipts.fold<double>(0, (sum, receipt) => sum + receipt.gross);
 
-  String _money(double value) => '£${value.toStringAsFixed(2)}';
+  String _money(double value) => formatAppMoney(value);
 
   @override
   Widget build(BuildContext context) {
@@ -336,7 +336,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                '${_rangeLabel()} · ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
+                '${_rangeLabel()} Â· ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -458,9 +458,9 @@ class _InvoiceTable extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Table(
         columnWidths: const {
-          0: FlexColumnWidth(3.2),
-          1: FlexColumnWidth(4.3),
-          2: FlexColumnWidth(2.5),
+          0: FlexColumnWidth(2.8),
+          1: FlexColumnWidth(4.0),
+          2: FlexColumnWidth(3.2),
         },
         children: [
           TableRow(
@@ -468,7 +468,7 @@ class _InvoiceTable extends StatelessWidget {
             children: [
               _InvoiceTableCell('Date', style: headerStyle),
               _InvoiceTableCell('Supplier', style: headerStyle),
-              _InvoiceTableCell('Gross £',
+              _InvoiceTableCell('Gross',
                   style: headerStyle, alignRight: true),
             ],
           ),
@@ -481,7 +481,9 @@ class _InvoiceTable extends StatelessWidget {
               ),
               children: [
                 _InvoiceTableCell(
-                  DateFormat('dd/MM/yyyy').format(receipt.date),
+                  DateFormat('dd/MM/yy').format(receipt.date),
+                  fitText: true,
+                  style: const TextStyle(fontSize: 12),
                   onTap: () => onOpen(receipt),
                 ),
                 _InvoiceTableCell(
@@ -490,9 +492,9 @@ class _InvoiceTable extends StatelessWidget {
                   onTap: () => onOpen(receipt),
                 ),
                 _InvoiceTableCell(
-                  '£${receipt.gross.toStringAsFixed(2)}',
+                  formatAppMoney(receipt.gross),
                   alignRight: true,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                  fitText: true,
                   onTap: () => onOpen(receipt),
                 ),
               ],
@@ -508,6 +510,7 @@ class _InvoiceTableCell extends StatelessWidget {
   final TextStyle? style;
   final bool alignRight;
   final int maxLines;
+  final bool fitText;
   final VoidCallback? onTap;
 
   const _InvoiceTableCell(
@@ -515,20 +518,30 @@ class _InvoiceTableCell extends StatelessWidget {
     this.style,
     this.alignRight = false,
     this.maxLines = 1,
+    this.fitText = false,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final textWidget = Text(
+      text,
+      textAlign: alignRight ? TextAlign.right : TextAlign.left,
+      maxLines: maxLines,
+      overflow: fitText ? TextOverflow.visible : TextOverflow.ellipsis,
+      softWrap: false,
+      style: style,
+    );
+
     final child = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Text(
-        text,
-        textAlign: alignRight ? TextAlign.right : TextAlign.left,
-        maxLines: maxLines,
-        overflow: TextOverflow.ellipsis,
-        style: style,
-      ),
+      child: fitText
+          ? FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
+              child: textWidget,
+            )
+          : textWidget,
     );
     if (onTap == null) return child;
     return InkWell(onTap: onTap, child: child);
@@ -552,7 +565,7 @@ class _HistoryReceiptTile extends StatelessWidget {
       '#${(receipt.scanNo ?? 0).toString().padLeft(5, '0')}',
       receipt.category,
       if (projectName != null) projectName!,
-      'Invoice ${DateFormat('dd/MM/yyyy').format(receipt.date)}',
+      'Invoice ${DateFormat('dd/MM/yy').format(receipt.date)}',
       'Scanned ${DateFormat('dd/MM/yyyy').format(receipt.createdAt)}',
     ];
 
@@ -584,7 +597,7 @@ class _HistoryReceiptTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
-        subtitleParts.join(' · '),
+        subtitleParts.join(' Â· '),
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
       ),
@@ -595,7 +608,7 @@ class _HistoryReceiptTile extends StatelessWidget {
           children: [
             Flexible(
               child: Text(
-                '£${receipt.gross.toStringAsFixed(2)}',
+                formatAppMoney(receipt.gross),
                 textAlign: TextAlign.right,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.bold),
@@ -609,3 +622,6 @@ class _HistoryReceiptTile extends StatelessWidget {
     );
   }
 }
+
+
+

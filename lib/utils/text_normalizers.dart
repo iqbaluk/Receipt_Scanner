@@ -1,9 +1,9 @@
-String normaliseInvoiceNumber(String? value) {
+String normalizeInvoiceNumber(String? value) {
   if (value == null) return '';
   return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
 }
 
-String normaliseSupplier(String? value) {
+String normalizeSupplier(String? value) {
   if (value == null) return '';
   return value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
 }

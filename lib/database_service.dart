@@ -162,6 +162,24 @@ class ProjectReport {
   });
 }
 
+class CombinedProjectReport {
+  final List<Project> projects;
+  final List<String> categories;
+  final Map<String, Map<int, double>> grossByCategoryProject;
+  final Map<int, double> projectTotals;
+  final double grandTotal;
+  final int invoiceCount;
+
+  CombinedProjectReport({
+    required this.projects,
+    required this.categories,
+    required this.grossByCategoryProject,
+    required this.projectTotals,
+    required this.grandTotal,
+    required this.invoiceCount,
+  });
+}
+
 class Receipt {
   final int? id;
   final int? projectId;
@@ -310,7 +328,8 @@ class DatabaseService {
   static const String _table = 'tbl_receipts';
   static const String _projectsTable = 'tbl_projects';
   static const String _categoriesTable = 'tbl_categories';
-  static const int _dbVersion = 7;
+  static const int _dbVersion = 8;
+  static const String _combinedReportView = 'vw_receipt_project_matrix';
 
   static const List<String> defaultCategories = [
     'Material',
@@ -371,6 +390,7 @@ class DatabaseService {
         await db.execute(
             'CREATE INDEX idx_${_table}_project_id ON $_table(project_id)');
         await _createDuplicateIntegrityTriggers(db);
+        await _createCombinedReportView(db);
         await db.update(
           _table,
           {'project_id': defaultProjectId},
@@ -436,10 +456,14 @@ class DatabaseService {
         if (oldV < 7) {
           await _refreshDuplicateIntegrityTriggers(db);
         }
+        if (oldV < 8) {
+          await _createCombinedReportView(db);
+        }
       },
     );
 
     await _refreshDuplicateIntegrityTriggers(_db!);
+    await _createCombinedReportView(_db!);
 
     return _db!;
   }
@@ -490,10 +514,10 @@ class DatabaseService {
 
   static Future<void> _createDuplicateIntegrityTriggers(
       DatabaseExecutor db) async {
-    final existingInvoiceSql = _normalisedInvoiceSql('r.invoice_number');
-    final newInvoiceSql = _normalisedInvoiceSql('NEW.invoice_number');
-    final existingSupplierSql = _normalisedSupplierSql('r.supplier');
-    final newSupplierSql = _normalisedSupplierSql('NEW.supplier');
+    final existingInvoiceSql = _normalizedInvoiceSql('r.invoice_number');
+    final newInvoiceSql = _normalizedInvoiceSql('NEW.invoice_number');
+    final existingSupplierSql = _normalizedSupplierSql('r.supplier');
+    final newSupplierSql = _normalizedSupplierSql('NEW.supplier');
 
     await db.execute('''
       CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_invoice_signature_insert
@@ -536,6 +560,24 @@ class DatabaseService {
     await db.execute(
         'DROP TRIGGER IF EXISTS trg_receipts_no_dup_invoice_signature_update');
     await _createDuplicateIntegrityTriggers(db);
+  }
+
+  static Future<void> _createCombinedReportView(DatabaseExecutor db) async {
+    await db.execute('DROP VIEW IF EXISTS $_combinedReportView');
+    await db.execute('''
+      CREATE VIEW $_combinedReportView AS
+      SELECT
+        r.id AS receipt_id,
+        r.project_id AS project_id,
+        p.name AS project_name,
+        r.category AS category,
+        r.gross AS gross,
+        r.date AS invoice_date,
+        substr(r.created_at, 1, 10) AS scan_date
+      FROM $_table r
+      LEFT JOIN $_projectsTable p ON p.id = r.project_id
+      WHERE r.project_id IS NOT NULL
+    ''');
   }
 
   static Future<void> _createCategoriesTable(Database db) async {
@@ -654,6 +696,70 @@ class DatabaseService {
       totalVat: (total['total_vat'] as num?)?.toDouble() ?? 0,
       totalGross: (total['total_gross'] as num?)?.toDouble() ?? 0,
       categories: categoryRows.map((r) => CategorySummary.fromMap(r)).toList(),
+    );
+  }
+
+  static Future<CombinedProjectReport> getCombinedProjectReport({
+    required DateTime from,
+    required DateTime to,
+    bool useScanDate = false,
+  }) async {
+    final db = await _open();
+    final projects = await getProjects();
+    if (projects.isEmpty) {
+      return CombinedProjectReport(
+        projects: const [],
+        categories: const [],
+        grossByCategoryProject: const {},
+        projectTotals: const {},
+        grandTotal: 0,
+        invoiceCount: 0,
+      );
+    }
+
+    final dateColumn = useScanDate ? 'scan_date' : 'invoice_date';
+    final fromStr = Receipt.formatDate(from);
+    final toStr = Receipt.formatDate(to);
+    final rows = await db.rawQuery('''
+      SELECT category, project_id, COALESCE(SUM(gross), 0) AS total_gross
+      FROM $_combinedReportView
+      WHERE $dateColumn >= ? AND $dateColumn <= ?
+      GROUP BY category, project_id
+      ORDER BY category COLLATE NOCASE ASC
+    ''', [fromStr, toStr]);
+    final countRows = await db.rawQuery('''
+      SELECT COUNT(*) AS invoice_count
+      FROM $_combinedReportView
+      WHERE $dateColumn >= ? AND $dateColumn <= ?
+    ''', [fromStr, toStr]);
+
+    final categoriesSet = <String>{};
+    final grossByCategoryProject = <String, Map<int, double>>{};
+    final projectTotals = <int, double>{for (final p in projects) if (p.id != null) p.id!: 0};
+    double grandTotal = 0;
+
+    for (final row in rows) {
+      final category = (row['category'] as String?)?.trim() ?? '';
+      final projectId = (row['project_id'] as num?)?.toInt();
+      final gross = (row['total_gross'] as num?)?.toDouble() ?? 0;
+      if (category.isEmpty || projectId == null) continue;
+      categoriesSet.add(category);
+      final byProject =
+          grossByCategoryProject.putIfAbsent(category, () => <int, double>{});
+      byProject[projectId] = gross;
+      projectTotals[projectId] = (projectTotals[projectId] ?? 0) + gross;
+      grandTotal += gross;
+    }
+
+    final categories = categoriesSet.toList()..sort();
+
+    return CombinedProjectReport(
+      projects: projects,
+      categories: categories,
+      grossByCategoryProject: grossByCategoryProject,
+      projectTotals: projectTotals,
+      grandTotal: grandTotal,
+      invoiceCount: (countRows.first['invoice_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -957,7 +1063,7 @@ class DatabaseService {
     }
 
     final db = await _open();
-    final searchTerms = <String>{trimmed, _normaliseDateQuery(trimmed)}
+    final searchTerms = <String>{trimmed, _normalizeDateQuery(trimmed)}
         .where((term) => term.isNotEmpty)
         .toList();
     final filters = <String>[];
@@ -1081,7 +1187,7 @@ class DatabaseService {
     return rows.map((r) => Receipt.fromMap(r)).toList();
   }
 
-  static String _normaliseDateQuery(String value) {
+  static String _normalizeDateQuery(String value) {
     final match = RegExp(r'^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$')
         .firstMatch(value.trim());
     if (match == null) return '';
@@ -1107,7 +1213,7 @@ class DatabaseService {
   /// Exact invoice+supplier+date matches are global; supplier/date/gross fallback is project-scoped.
   /// Used to warn about likely duplicates at save time.
   /// Returns the matching existing receipt(s), or empty list if none.
-  /// Optionally exclude a specific id (used when editing — exclude self).
+  /// Optionally exclude a specific id (used when editing £ exclude self).
   static Future<List<Receipt>> findPossibleDuplicates({
     int? projectId,
     String? invoiceNumber,
@@ -1119,10 +1225,10 @@ class DatabaseService {
     final db = await _open();
     final args = <dynamic>[];
     final duplicateParts = <String>[];
-    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normalizeInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isNotEmpty) {
-      final invoiceSql = _normalisedInvoiceSql('invoice_number');
-      final supplierSql = _normalisedSupplierSql('supplier');
+      final invoiceSql = _normalizedInvoiceSql('invoice_number');
+      final supplierSql = _normalizedSupplierSql('supplier');
       duplicateParts.add(
         "($invoiceSql = ? "
         "AND $supplierSql = ? "
@@ -1130,15 +1236,15 @@ class DatabaseService {
       );
       args.addAll([
         normalizedInvoice,
-        normaliseSupplier(supplier),
+        normalizeSupplier(supplier),
         Receipt.formatDate(date),
       ]);
     }
 
-    final supplierSql = _normalisedSupplierSql('supplier');
+    final supplierSql = _normalizedSupplierSql('supplier');
     var fallback = '($supplierSql = ? AND date = ? AND ABS(gross - ?) < 0.005';
     final fallbackArgs = <dynamic>[
-      normaliseSupplier(supplier),
+      normalizeSupplier(supplier),
       Receipt.formatDate(date),
       gross,
     ];
@@ -1164,11 +1270,11 @@ class DatabaseService {
     return rows.map((r) => Receipt.fromMap(r)).toList();
   }
 
-  static String _normalisedInvoiceSql(String expr) {
+  static String _normalizedInvoiceSql(String expr) {
     return "UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE($expr, '')), ' ', ''), '-', ''), '/', ''), '_', ''), '.', ''))";
   }
 
-  static String _normalisedSupplierSql(String expr) {
+  static String _normalizedSupplierSql(String expr) {
     return "LOWER(REPLACE(TRIM(COALESCE($expr, '')), ' ', ''))";
   }
 
@@ -1177,10 +1283,10 @@ class DatabaseService {
     int? projectId,
     int? excludeId,
   }) async {
-    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normalizeInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isEmpty) return null;
     final db = await _open();
-    final invoiceSql = _normalisedInvoiceSql('invoice_number');
+    final invoiceSql = _normalizedInvoiceSql('invoice_number');
     final whereParts = <String>["$invoiceSql = ?"];
     final args = <dynamic>[normalizedInvoice];
     if (projectId != null) {
@@ -1208,11 +1314,11 @@ class DatabaseService {
     required DateTime date,
     int? excludeId,
   }) async {
-    final normalizedInvoice = normaliseInvoiceNumber(invoiceNumber);
+    final normalizedInvoice = normalizeInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isEmpty) return null;
     final db = await _open();
-    final invoiceSql = _normalisedInvoiceSql('invoice_number');
-    final supplierSql = _normalisedSupplierSql('supplier');
+    final invoiceSql = _normalizedInvoiceSql('invoice_number');
+    final supplierSql = _normalizedSupplierSql('supplier');
     final whereParts = <String>[
       "$invoiceSql = ?",
       "$supplierSql = ?",
@@ -1220,7 +1326,7 @@ class DatabaseService {
     ];
     final args = <dynamic>[
       normalizedInvoice,
-      normaliseSupplier(supplier),
+      normalizeSupplier(supplier),
       Receipt.formatDate(date),
     ];
     if (excludeId != null) {
@@ -1304,3 +1410,4 @@ class DatabaseService {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 }
+

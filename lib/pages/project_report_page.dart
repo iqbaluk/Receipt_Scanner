@@ -56,36 +56,55 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
     );
   }
 
+  Future<void> _openCombinedReport() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CombinedReportPage(
+          initialRange: ExportRange.allTime(),
+          initialDateBasis: DateBasis.invoiceDate,
+        ),
+      ),
+    );
+  }
+
   Future<void> _showReportExportMenu() async {
-    final contentChoice = await showDialog<ExportContent>(
+    final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
         title: const Text('Share report'),
         children: [
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, ExportContent.csvOnly),
+            onPressed: () => Navigator.pop(ctx, 'summary_pdf'),
             child: const ListTile(
               leading: Icon(Icons.description),
-              title: Text('CSV only'),
+              title: Text('Summary PDF (Recommended)'),
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
           ),
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, ExportContent.both),
+            onPressed: () => Navigator.pop(ctx, 'summary_csv'),
+            child: const ListTile(
+              leading: Icon(Icons.table_view),
+              title: Text('Summary CSV'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'summary_tx'),
+            child: const ListTile(
+              leading: Icon(Icons.table_view),
+              title: Text('Summary + transactions CSV'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'tx_photos'),
             child: const ListTile(
               leading: Icon(Icons.cloud_upload),
-              title: Text('CSV + photos ZIP'),
-              subtitle: Text('CSV attached separately, photos zipped'),
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, ExportContent.photosOnly),
-            child: const ListTile(
-              leading: Icon(Icons.photo_library),
-              title: Text('Photos only ZIP'),
+              title: Text('Transactions + photos'),
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
@@ -98,17 +117,20 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
       ),
     );
 
-    if (contentChoice == null || !mounted) return;
+    if (choice == null || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Building report export...')),
     );
 
-    final result = await ExportService.exportAndShare(
-      _range,
-      content: contentChoice,
+    final report = await _reportFuture;
+    final result = await ExportService.shareProjectReportSummary(
+      project: widget.project,
+      report: report,
+      range: _range,
       dateBasis: _dateBasis,
-      projectId: widget.project.id,
-      projectName: widget.project.name,
+      summaryAsPdf: choice == 'summary_pdf',
+      includeTransactions: choice == 'summary_tx' || choice == 'tx_photos',
+      includePhotos: choice == 'tx_photos',
     );
 
     if (!mounted) return;
@@ -148,6 +170,11 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
       appBar: AppBar(
         title: const Text('Reports'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.table_chart),
+            tooltip: 'Combined report',
+            onPressed: _openCombinedReport,
+          ),
           IconButton(
             icon: const Icon(Icons.list_alt),
             tooltip: 'Invoice list',
@@ -258,7 +285,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
-            '${_rangeLabel()} ? ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
+            '${_rangeLabel()} · ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
             style: TextStyle(
               fontSize: 13,
               color: colorScheme.onPrimaryContainer,
@@ -285,7 +312,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
         Expanded(
             child: _buildStatCard(
           label: 'Net Total',
-          value: '£${report.totalNet.toStringAsFixed(2)}',
+          value: formatAppMoney(report.totalNet),
           icon: Icons.account_balance_wallet,
           colorScheme: colorScheme,
         )),
@@ -293,7 +320,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
         Expanded(
             child: _buildStatCard(
           label: 'VAT',
-          value: '£${report.totalVat.toStringAsFixed(2)}',
+          value: formatAppMoney(report.totalVat),
           icon: Icons.money_off,
           colorScheme: colorScheme,
         )),
@@ -301,7 +328,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
         Expanded(
             child: _buildStatCard(
           label: 'Gross Total',
-          value: '£${report.totalGross.toStringAsFixed(2)}',
+          value: formatAppMoney(report.totalGross),
           icon: Icons.summarize,
           highlight: true,
           colorScheme: colorScheme,
@@ -399,7 +426,7 @@ class SummaryReportTable extends StatelessWidget {
             children: [
               _ReportCell('Categories', style: headerStyle),
               _ReportCell('Inv count', style: headerStyle, alignRight: true),
-              _ReportCell('Gross £', style: headerStyle, alignRight: true),
+              _ReportCell('Gross', style: headerStyle, alignRight: true),
             ],
           ),
           for (final summary in report.categories)
@@ -517,7 +544,7 @@ class _BudgetProgress extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '£${spent.toStringAsFixed(2)} / £${budget.toStringAsFixed(2)}',
+                        '${formatAppMoney(spent)} / ${formatAppMoney(budget)}',
                         style: TextStyle(
                           fontSize: 13,
                           color: colorScheme.onSurfaceVariant,
@@ -562,8 +589,8 @@ class _BudgetProgress extends StatelessWidget {
               children: [
                 Text(
                   overBudget
-                      ? '£${remaining.abs().toStringAsFixed(2)} over budget'
-                      : '£${remaining.toStringAsFixed(2)} remaining',
+                      ? '${formatAppMoney(remaining.abs())} over budget'
+                      : '${formatAppMoney(remaining)} remaining',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -572,7 +599,7 @@ class _BudgetProgress extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  'Budget: £${budget.toStringAsFixed(2)}',
+                  'Budget: ${formatAppMoney(budget)}',
                   style: TextStyle(
                     fontSize: 12,
                     color: colorScheme.onSurfaceVariant,
@@ -586,3 +613,4 @@ class _BudgetProgress extends StatelessWidget {
     );
   }
 }
+

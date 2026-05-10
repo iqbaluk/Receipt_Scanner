@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Receipt Scanner - Final Version (Steps 1-4 with smart filenames)
 // ============================================================
 // - Manual entry always works
@@ -23,6 +23,7 @@ import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:sqflite/sqflite.dart';
 
 import 'database_service.dart';
 import 'export_service.dart';
@@ -37,6 +38,7 @@ part 'pages/category_manager_page.dart';
 part 'pages/gemini_settings_page.dart';
 part 'pages/receipt_history_page.dart';
 part 'pages/project_report_page.dart';
+part 'pages/combined_report_page.dart';
 part 'utils/helpers.dart';
 part 'pages/receipt_detail_page.dart';
 part 'pages/settings_page.dart';
@@ -249,3 +251,4 @@ class ReceiptScannerApp extends StatelessWidget {
     );
   }
 }
+

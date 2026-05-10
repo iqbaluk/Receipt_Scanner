@@ -376,6 +376,8 @@ class SettingsPage extends StatelessWidget {
     final archive = ZipDecoder().decodeBytes(await backup.readAsBytes());
     await extractArchiveToDisk(archive, restoreDir.path);
 
+    await _validateRestoreBundle(restoreDir);
+
     final restoredDb = File(p.join(restoreDir.path, 'receipt_scanner.db'));
     if (!await restoredDb.exists()) {
       throw StateError('Backup does not contain receipt_scanner.db.');
@@ -383,6 +385,7 @@ class SettingsPage extends StatelessWidget {
 
     await DatabaseService.closeConnection();
     final dbPath = await DatabaseService.getDatabasePath();
+    await _validateDatabaseFile(restoredDb.path);
     await restoredDb.copy(dbPath);
 
     final restoredPhotos = Directory(p.join(restoreDir.path, 'receipts'));
@@ -393,6 +396,37 @@ class SettingsPage extends StatelessWidget {
     await photosDir.create(recursive: true);
     if (await restoredPhotos.exists()) {
       await _copyDirectoryContents(restoredPhotos, photosDir);
+    }
+  }
+
+  Future<void> _validateRestoreBundle(Directory restoreDir) async {
+    final manifestFile = File(p.join(restoreDir.path, 'manifest.json'));
+    if (!await manifestFile.exists()) {
+      throw StateError('Backup is missing manifest.json.');
+    }
+    final decoded = jsonDecode(await manifestFile.readAsString());
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('Backup manifest is invalid.');
+    }
+    if (decoded['type'] != 'receipt_scanner_full_backup') {
+      throw StateError('Backup type is not supported.');
+    }
+    if ((decoded['database'] as String?) != 'receipt_scanner.db') {
+      throw StateError('Backup manifest database target is invalid.');
+    }
+  }
+
+  Future<void> _validateDatabaseFile(String dbPath) async {
+    Database? probeDb;
+    try {
+      probeDb = await openDatabase(dbPath, readOnly: true);
+      await probeDb.rawQuery('SELECT COUNT(*) FROM receipts');
+      await probeDb.rawQuery('SELECT COUNT(*) FROM projects');
+      await probeDb.rawQuery('SELECT COUNT(*) FROM categories');
+    } catch (_) {
+      throw StateError('Backup database is corrupted or incompatible.');
+    } finally {
+      await probeDb?.close();
     }
   }
 

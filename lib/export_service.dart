@@ -11,10 +11,14 @@
 // ============================================================
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:archive/archive_io.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import 'database_service.dart';
@@ -113,6 +117,9 @@ class ExportResult {
 }
 
 class ExportService {
+  static const FlutterSecureStorage _settingsStorage = FlutterSecureStorage();
+  static const String _clientNameKey = 'client_name';
+
   /// Build the export and open the Android share sheet.
   static Future<ExportResult> exportAndShare(
     ExportRange range, {
@@ -122,6 +129,7 @@ class ExportService {
     String? projectName,
   }) async {
     try {
+      final ownerName = await _reportOwnerName();
       final receipts = dateBasis == DateBasis.scanDate
           ? await DatabaseService.getByScanDateRange(
               range.from,
@@ -150,6 +158,7 @@ class ExportService {
           receipts,
           range,
           dateBasis,
+          ownerName: ownerName,
           projectName: projectName,
         );
       }
@@ -192,7 +201,7 @@ class ExportService {
 
       if (filesToShare.isEmpty) {
         return ExportResult.failure(
-            'Nothing to export — no CSV or photos prepared.');
+            'Nothing to export - no CSV or photos prepared.');
       }
 
       // ---- Open share sheet ----
@@ -217,9 +226,18 @@ class ExportService {
     List<Receipt> receipts,
     ExportRange range,
     DateBasis basis, {
+    required String ownerName,
     String? projectName,
   }) async {
     final csv = StringBuffer();
+    csv.writeln('Client,${_csvEscape(ownerName)}');
+    csv.writeln('Range,${_friendlyLabel(range)}');
+    csv.writeln(
+        'Date basis,${basis == DateBasis.scanDate ? "Scan date" : "Invoice date"}');
+    if (projectName != null && projectName.trim().isNotEmpty) {
+      csv.writeln('Report,${_csvEscape(projectName)}');
+    }
+    csv.writeln('');
 
     // Column order: Category before Supplier (for filtering),
     // BOTH dates included so accountant sees the full picture.
@@ -372,4 +390,456 @@ class ExportService {
     if (tag.length > 30) return tag.substring(0, 30);
     return tag;
   }
+
+  static Future<ExportResult> shareProjectReportSummary({
+    required Project project,
+    required ProjectReport report,
+    required ExportRange range,
+    required DateBasis dateBasis,
+    bool summaryAsPdf = false,
+    bool includeTransactions = false,
+    bool includePhotos = false,
+  }) async {
+    try {
+      final ownerName = await _reportOwnerName();
+      final filesToShare = <XFile>[];
+      final summaryPath = summaryAsPdf
+          ? await _buildProjectSummaryPdf(
+              ownerName: ownerName,
+              project: project,
+              report: report,
+              range: range,
+              basis: dateBasis,
+            )
+          : await _buildProjectSummaryCsv(
+              ownerName: ownerName,
+              project: project,
+              report: report,
+              range: range,
+              basis: dateBasis,
+            );
+      filesToShare.add(
+        XFile(
+          summaryPath,
+          mimeType: summaryAsPdf ? 'application/pdf' : 'text/csv',
+        ),
+      );
+
+      var receiptCount = report.receiptCount;
+      var photoCount = 0;
+      if (includeTransactions || includePhotos) {
+        final receipts = dateBasis == DateBasis.scanDate
+            ? await DatabaseService.getByScanDateRange(
+                range.from,
+                range.to,
+                projectId: project.id,
+              )
+            : await DatabaseService.getByDateRange(
+                range.from,
+                range.to,
+                projectId: project.id,
+              );
+        receiptCount = receipts.length;
+        if (includeTransactions && receipts.isNotEmpty) {
+          final txCsv = await _buildCsv(
+            receipts,
+            range,
+            dateBasis,
+            ownerName: ownerName,
+            projectName: project.name,
+          );
+          filesToShare.add(XFile(txCsv, mimeType: 'text/csv'));
+        }
+        if (includePhotos) {
+          final photoFiles = await _existingPhotoFiles(receipts);
+          photoCount = photoFiles.length;
+          if (photoFiles.isNotEmpty) {
+            final zipPath = await _buildZip(
+              photoFiles,
+              range,
+              dateBasis,
+              projectName: project.name,
+            );
+            filesToShare.add(XFile(zipPath, mimeType: 'application/zip'));
+          }
+        }
+      }
+
+      final result = await Share.shareXFiles(
+        filesToShare,
+        subject: 'Project report - ${project.name}',
+      );
+      if (result.status == ShareResultStatus.unavailable) {
+        return ExportResult.failure('Sharing not available on this device.');
+      }
+      return ExportResult.success(receiptCount, photoCount);
+    } catch (e) {
+      return ExportResult.failure('Export failed: ${e.toString()}');
+    }
+  }
+
+  static Future<ExportResult> shareCombinedReportSummary({
+    required CombinedProjectReport report,
+    required ExportRange range,
+    required DateBasis dateBasis,
+    bool summaryAsPdf = false,
+    bool includeTransactions = false,
+    bool includePhotos = false,
+  }) async {
+    try {
+      final ownerName = await _reportOwnerName();
+      final filesToShare = <XFile>[];
+      final summaryPath = summaryAsPdf
+          ? await _buildCombinedSummaryPdf(
+              ownerName: ownerName,
+              report: report,
+              range: range,
+              basis: dateBasis,
+            )
+          : await _buildCombinedSummaryCsv(
+              ownerName: ownerName,
+              report: report,
+              range: range,
+              basis: dateBasis,
+            );
+      filesToShare.add(
+        XFile(
+          summaryPath,
+          mimeType: summaryAsPdf ? 'application/pdf' : 'text/csv',
+        ),
+      );
+
+      var receiptCount = report.invoiceCount;
+      var photoCount = 0;
+      if (includeTransactions || includePhotos) {
+        final receipts = dateBasis == DateBasis.scanDate
+            ? await DatabaseService.getByScanDateRange(range.from, range.to)
+            : await DatabaseService.getByDateRange(range.from, range.to);
+        receiptCount = receipts.length;
+        if (includeTransactions && receipts.isNotEmpty) {
+          final txCsv = await _buildCsv(
+            receipts,
+            range,
+            dateBasis,
+            ownerName: ownerName,
+            projectName: 'Combined',
+          );
+          filesToShare.add(XFile(txCsv, mimeType: 'text/csv'));
+        }
+        if (includePhotos) {
+          final photoFiles = await _existingPhotoFiles(receipts);
+          photoCount = photoFiles.length;
+          if (photoFiles.isNotEmpty) {
+            final zipPath = await _buildZip(
+              photoFiles,
+              range,
+              dateBasis,
+              projectName: 'Combined',
+            );
+            filesToShare.add(XFile(zipPath, mimeType: 'application/zip'));
+          }
+        }
+      }
+
+      final result = await Share.shareXFiles(
+        filesToShare,
+        subject: 'Combined report - ${_friendlyLabel(range)}',
+      );
+      if (result.status == ShareResultStatus.unavailable) {
+        return ExportResult.failure('Sharing not available on this device.');
+      }
+      return ExportResult.success(receiptCount, photoCount);
+    } catch (e) {
+      return ExportResult.failure('Export failed: ${e.toString()}');
+    }
+  }
+
+  static Future<String> _buildProjectSummaryCsv({
+    required String ownerName,
+    required Project project,
+    required ProjectReport report,
+    required ExportRange range,
+    required DateBasis basis,
+  }) async {
+    final csv = StringBuffer();
+    csv.writeln('Client,${_csvEscape(ownerName)}');
+    csv.writeln('Project,${_csvEscape(project.name)}');
+    csv.writeln('Range,${_friendlyLabel(range)}');
+    csv.writeln(
+        'Date basis,${basis == DateBasis.scanDate ? "Scan date" : "Invoice date"}');
+    csv.writeln('');
+    csv.writeln('Category,Inv count,Gross');
+    for (final c in report.categories) {
+      csv.writeln(
+        '${_csvEscape(c.category)},${c.receiptCount},${c.totalGross.toStringAsFixed(2)}',
+      );
+    }
+    csv.writeln('Total,${report.receiptCount},${report.totalGross.toStringAsFixed(2)}');
+    final exportDir = await _exportDir();
+    final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+    final basisTag = basis == DateBasis.scanDate ? 'byScan' : 'byInvoice';
+    final projectTag = _filenameTag(project.name);
+    final path = p.join(
+      exportDir.path,
+      'project_summary_${projectTag}_${range.label}_${basisTag}_$ts.csv',
+    );
+    await File(path).writeAsString(csv.toString());
+    return path;
+  }
+
+  static Future<String> _buildCombinedSummaryCsv({
+    required String ownerName,
+    required CombinedProjectReport report,
+    required ExportRange range,
+    required DateBasis basis,
+  }) async {
+    final csv = StringBuffer();
+    csv.writeln('Client,${_csvEscape(ownerName)}');
+    csv.writeln('Report,Combined Summary');
+    csv.writeln('Range,${_friendlyLabel(range)}');
+    csv.writeln(
+        'Date basis,${basis == DateBasis.scanDate ? "Scan date" : "Invoice date"}');
+    csv.writeln('');
+    final headers = <String>['Categories', ...report.projects.map((p) => p.name), 'Total'];
+    csv.writeln(headers.map(_csvEscape).join(','));
+    for (final category in report.categories) {
+      final row = <String>[category];
+      var rowTotal = 0.0;
+      for (final p in report.projects) {
+        final value = report.grossByCategoryProject[category]?[p.id] ?? 0;
+        rowTotal += value;
+        row.add(value == 0 ? '-' : value.toStringAsFixed(2));
+      }
+      row.add(rowTotal.toStringAsFixed(2));
+      csv.writeln(row.map(_csvEscape).join(','));
+    }
+    final totals = <String>['Total'];
+    for (final p in report.projects) {
+      totals.add((report.projectTotals[p.id] ?? 0).toStringAsFixed(2));
+    }
+    totals.add(report.grandTotal.toStringAsFixed(2));
+    csv.writeln(totals.map(_csvEscape).join(','));
+
+    final exportDir = await _exportDir();
+    final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+    final basisTag = basis == DateBasis.scanDate ? 'byScan' : 'byInvoice';
+    final path = p.join(
+      exportDir.path,
+      'combined_summary_${range.label}_${basisTag}_$ts.csv',
+    );
+    await File(path).writeAsString(csv.toString());
+    return path;
+  }
+
+  static Future<String> _buildProjectSummaryPdf({
+    required String ownerName,
+    required Project project,
+    required ProjectReport report,
+    required ExportRange range,
+    required DateBasis basis,
+  }) async {
+    final pdf = pw.Document();
+    final money = NumberFormat('#,##0.##');
+    final headers = ['Category', 'Inv count', 'Gross'];
+    final rows = <List<String>>[
+      ...report.categories.map((c) => [
+            c.category,
+            money.format(c.receiptCount),
+            money.format(c.totalGross),
+          ]),
+      ['Total', money.format(report.receiptCount), money.format(report.totalGross)],
+    ];
+    final colWidths = _contentFlexColumnWidths(headers, rows);
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (context) => [
+          pw.Text('Project Summary Report',
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 4),
+          pw.Text('Client: $ownerName',
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 6),
+          pw.Text('Project: ${project.name}'),
+          pw.Text('Range: ${_friendlyLabel(range)}'),
+          pw.Text('Basis: ${basis == DateBasis.scanDate ? "Scan date" : "Invoice date"}'),
+          pw.SizedBox(height: 12),
+          _buildStyledPdfTable(
+            headers: headers,
+            rows: rows,
+            rightAlignedColumns: const {1, 2},
+            totalRowIndex: rows.length - 1,
+            columnWidths: colWidths,
+          ),
+        ],
+      ),
+    );
+    final exportDir = await _exportDir();
+    final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+    final basisTag = basis == DateBasis.scanDate ? 'byScan' : 'byInvoice';
+    final projectTag = _filenameTag(project.name);
+    final path = p.join(
+      exportDir.path,
+      'project_summary_${projectTag}_${range.label}_${basisTag}_$ts.pdf',
+    );
+    await File(path).writeAsBytes(await pdf.save());
+    return path;
+  }
+
+  static Future<String> _buildCombinedSummaryPdf({
+    required String ownerName,
+    required CombinedProjectReport report,
+    required ExportRange range,
+    required DateBasis basis,
+  }) async {
+    final pdf = pw.Document();
+    final money = NumberFormat('#,##0.##');
+    final headers = <String>[
+      'Categories',
+      ...report.projects.map((p) => p.name),
+      'Total'
+    ];
+    final rows = <List<String>>[];
+    for (final category in report.categories) {
+      double rowTotal = 0;
+      final row = <String>[category];
+      for (final p in report.projects) {
+        final v = report.grossByCategoryProject[category]?[p.id] ?? 0;
+        rowTotal += v;
+        row.add(v == 0 ? '-' : money.format(v));
+      }
+      row.add(money.format(rowTotal));
+      rows.add(row);
+    }
+    rows.add([
+      'Total',
+      ...report.projects.map((p) => money.format(report.projectTotals[p.id] ?? 0)),
+      money.format(report.grandTotal),
+    ]);
+    final colWidths = _contentFlexColumnWidths(headers, rows);
+    final rightAligned = <int>{for (var i = 1; i < headers.length; i++) i};
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (context) => [
+          pw.Text('Combined Summary Report',
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 4),
+          pw.Text('Client: $ownerName',
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 6),
+          pw.Text('Range: ${_friendlyLabel(range)}'),
+          pw.Text('Basis: ${basis == DateBasis.scanDate ? "Scan date" : "Invoice date"}'),
+          pw.SizedBox(height: 12),
+          _buildStyledPdfTable(
+            headers: headers,
+            rows: rows,
+            rightAlignedColumns: rightAligned,
+            totalRowIndex: rows.length - 1,
+            columnWidths: colWidths,
+          ),
+        ],
+      ),
+    );
+    final exportDir = await _exportDir();
+    final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+    final basisTag = basis == DateBasis.scanDate ? 'byScan' : 'byInvoice';
+    final path = p.join(
+      exportDir.path,
+      'combined_summary_${range.label}_${basisTag}_$ts.pdf',
+    );
+    await File(path).writeAsBytes(await pdf.save());
+    return path;
+  }
+
+  static Map<int, pw.TableColumnWidth> _contentFlexColumnWidths(
+    List<String> headers,
+    List<List<String>> rows,
+  ) {
+    final weights = <double>[];
+    for (var c = 0; c < headers.length; c++) {
+      var maxLen = headers[c].length.toDouble();
+      for (final row in rows) {
+        if (c < row.length) {
+          maxLen = math.max(maxLen, row[c].length.toDouble());
+        }
+      }
+      // Keep sane bounds so one long value does not dominate.
+      weights.add(maxLen.clamp(6, 24));
+    }
+    return {
+      for (var i = 0; i < weights.length; i++)
+        i: pw.FlexColumnWidth(weights[i]),
+    };
+  }
+
+  static pw.Widget _buildStyledPdfTable({
+    required List<String> headers,
+    required List<List<String>> rows,
+    required Set<int> rightAlignedColumns,
+    required int totalRowIndex,
+    required Map<int, pw.TableColumnWidth> columnWidths,
+  }) {
+    final tableRows = <pw.TableRow>[];
+
+    tableRows.add(
+      pw.TableRow(
+        decoration: const pw.BoxDecoration(color: PdfColors.cyan100),
+        children: [
+          for (var c = 0; c < headers.length; c++)
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text(
+                headers[c],
+                textAlign: rightAlignedColumns.contains(c)
+                    ? pw.TextAlign.right
+                    : pw.TextAlign.left,
+                style:
+                    pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    for (var r = 0; r < rows.length; r++) {
+      final isTotal = r == totalRowIndex;
+      tableRows.add(
+        pw.TableRow(
+          decoration:
+              isTotal ? const pw.BoxDecoration(color: PdfColors.grey200) : null,
+          children: [
+            for (var c = 0; c < headers.length; c++)
+              pw.Padding(
+                padding: const pw.EdgeInsets.all(6),
+                child: pw.Text(
+                  c < rows[r].length ? rows[r][c] : '',
+                  textAlign: rightAlignedColumns.contains(c)
+                      ? pw.TextAlign.right
+                      : pw.TextAlign.left,
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    fontWeight:
+                        isTotal ? pw.FontWeight.bold : pw.FontWeight.normal,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.6),
+      columnWidths: columnWidths,
+      children: tableRows,
+    );
+  }
+
+  static Future<String> _reportOwnerName() async {
+    final name = (await _settingsStorage.read(key: _clientNameKey))?.trim() ?? '';
+    return name.isEmpty ? 'Client' : name;
+  }
 }
+

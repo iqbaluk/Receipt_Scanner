@@ -1,4 +1,16 @@
-part of '../main.dart';
+﻿part of '../main.dart';
+
+String formatAppDate(DateTime value) => DateFormat('dd/MM/yyyy').format(value);
+
+String formatAppMoney(
+  num value, {
+  int decimals = 2,
+  bool withSymbol = false,
+}) {
+  final pattern = decimals == 0 ? '#,##0' : '#,##0.${'0' * decimals}';
+  final formatted = NumberFormat(pattern).format(value);
+  return withSymbol ? '£$formatted' : formatted;
+}
 
 bool _isExactInvoiceDuplicate(
   Receipt receipt, {
@@ -6,10 +18,10 @@ bool _isExactInvoiceDuplicate(
   required String supplier,
   required DateTime date,
 }) {
-  final invoice = normaliseInvoiceNumber(invoiceNumber);
+  final invoice = normalizeInvoiceNumber(invoiceNumber);
   if (invoice.isEmpty) return false;
-  return normaliseInvoiceNumber(receipt.invoiceNumber) == invoice &&
-      normaliseSupplier(receipt.supplier) == normaliseSupplier(supplier) &&
+  return normalizeInvoiceNumber(receipt.invoiceNumber) == invoice &&
+      normalizeSupplier(receipt.supplier) == normalizeSupplier(supplier) &&
       Receipt.formatDate(receipt.date) == Receipt.formatDate(date);
 }
 
@@ -37,8 +49,8 @@ Future<void> _showHardDuplicateBlockedDialog(
   final details = existing == null
       ? null
       : '${existing.supplier}\n'
-          'Date: ${DateFormat('dd/MM/yyyy').format(existing.date)}\n'
-          'Gross: £${existing.gross.toStringAsFixed(2)}';
+          'Date: ${formatAppDate(existing.date)}\n'
+          'Gross: ${formatAppMoney(existing.gross)}';
 
   await showDialog<void>(
     context: context,
@@ -64,7 +76,7 @@ Future<void> _showHardDuplicateBlockedDialog(
                 border: Border.all(color: Colors.orange.shade200),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Text(details.toString()),
+              child: Text(details),
             ),
           ],
           const SizedBox(height: 10),
@@ -150,9 +162,12 @@ Future<ExportRange?> _pickExportRange(
         firstDate: DateTime(2020),
         lastDate: DateTime.now(),
       );
+      if (!context.mounted) return null;
       if (picked == null) return null;
       return ExportRange.custom(picked.start, picked.end);
     default:
       return null;
   }
 }
+
+

@@ -11,7 +11,7 @@ class _StartupSplashPageState extends State<StartupSplashPage> {
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(milliseconds: 3500), () {
+    Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ProjectListPage()),
@@ -49,20 +49,37 @@ class _StartupSplashPageState extends State<StartupSplashPage> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'Receipt Scanner',
+                  'Fast Flow AI Ltd',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         color: colorScheme.onPrimary,
                         fontWeight: FontWeight.w900,
                       ),
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  '(Invoices Scanner)',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: colorScheme.onPrimary.withValues(alpha: 0.92),
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
                 const SizedBox(height: 34),
                 SizedBox(
-                  width: 34,
-                  height: 34,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: colorScheme.onPrimary,
+                  width: 220,
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(seconds: 2),
+                    builder: (context, value, _) => LinearProgressIndicator(
+                      value: value,
+                      minHeight: 8,
+                      borderRadius: BorderRadius.circular(99),
+                      backgroundColor:
+                          colorScheme.onPrimary.withValues(alpha: 0.2),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(colorScheme.onPrimary),
+                    ),
                   ),
                 ),
               ],
