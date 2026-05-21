@@ -10,15 +10,18 @@ class GeminiSettingsPage extends StatefulWidget {
 class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
+  late List<String> _modelOptions;
   bool _loading = true;
   bool _saving = false;
   bool _testing = false;
   bool _obscureKey = true;
   bool _usingEnvFallback = false;
+  String? _lastScanModel;
 
   @override
   void initState() {
     super.initState();
+    _modelOptions = List<String>.from(GeminiService.selectableModels);
     _modelController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -36,11 +39,19 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
     setState(() => _loading = true);
     final settings = await GeminiService.loadSettings();
     final savedKey = await GeminiService.savedApiKey();
+    final savedOptions = await GeminiService.savedModelOptions();
+    final lastScanModel = await GeminiService.lastScanModel();
     if (!mounted) return;
     setState(() {
+      _modelOptions = List<String>.from(savedOptions);
       _apiKeyController.text = savedKey ?? '';
       _modelController.text = settings.model;
+      if (settings.model.trim().isNotEmpty &&
+          !_modelOptions.contains(settings.model.trim())) {
+        _modelOptions.add(settings.model.trim());
+      }
       _usingEnvFallback = settings.usesEnvKey && !settings.hasSavedApiKey;
+      _lastScanModel = lastScanModel;
       _loading = false;
     });
   }
@@ -52,6 +63,7 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
         apiKey: _apiKeyController.text,
         model: _modelController.text,
       );
+      await GeminiService.saveModelOptions(_modelOptions);
       if (!mounted) return;
       await _loadSettings();
       if (!mounted) return;
@@ -116,6 +128,79 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
     _modelController.text = model;
   }
 
+  String? _selectedListModel() {
+    final model = _modelController.text.trim();
+    if (_modelOptions.contains(model)) return model;
+    return null;
+  }
+
+  String _normalizeModelId(String value) => value.trim();
+
+  void _addCurrentModelToList() {
+    final model = _normalizeModelId(_modelController.text);
+    if (model.isEmpty) {
+      _showMessage('Enter a model ID first.');
+      return;
+    }
+    if (_modelOptions.contains(model)) {
+      _showMessage('Model already exists in list.');
+      return;
+    }
+    setState(() => _modelOptions.add(model));
+    unawaited(GeminiService.saveModelOptions(_modelOptions));
+    _showMessage('Added $model to model list.');
+  }
+
+  Future<void> _editModelOption(String model) async {
+    final controller = TextEditingController(text: model);
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit model option'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Model ID',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (updated == null) return;
+    final next = _normalizeModelId(updated);
+    if (next.isEmpty) {
+      _showMessage('Model ID cannot be empty.');
+      return;
+    }
+    if (next != model && _modelOptions.contains(next)) {
+      _showMessage('Model already exists in list.');
+      return;
+    }
+    setState(() {
+      final idx = _modelOptions.indexOf(model);
+      if (idx >= 0) _modelOptions[idx] = next;
+      if (_modelController.text.trim() == model) {
+        _modelController.text = next;
+      }
+    });
+    await GeminiService.saveModelOptions(_modelOptions);
+  }
+
+  void _removeModelOption(String model) {
+    setState(() => _modelOptions.remove(model));
+    unawaited(GeminiService.saveModelOptions(_modelOptions));
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -171,6 +256,24 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
                             ],
                           ),
                           const SizedBox(height: 16),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerLow,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: Text(
+                              _lastScanModel == null
+                                  ? 'Last scan model used: not available yet'
+                                  : 'Last scan model used: $_lastScanModel',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: _apiKeyController,
                             obscureText: _obscureKey,
@@ -195,27 +298,144 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
                             ),
                           ),
                           const SizedBox(height: 14),
+                          DropdownButtonFormField<String>(
+                            initialValue: _selectedListModel(),
+                            decoration: const InputDecoration(
+                              labelText: 'Gemini model (from list)',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: _modelOptions
+                                .map(
+                                  (model) => DropdownMenuItem<String>(
+                                    value: model,
+                                    child: Text(model),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              if (value != null) _useModel(value);
+                            },
+                          ),
+                          const SizedBox(height: 10),
                           TextField(
                             controller: _modelController,
                             decoration: const InputDecoration(
-                              labelText: 'Gemini model',
+                              labelText: 'Custom Gemini model (optional)',
+                              hintText: 'e.g. gemini-3.1-pro-preview',
                               border: OutlineInputBorder(),
                             ),
                           ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: _addCurrentModelToList,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add current model to list'),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          if (_modelOptions.isNotEmpty)
+                            Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: colorScheme.outlineVariant,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                children: [
+                                  for (var i = 0; i < _modelOptions.length; i++)
+                                    ListTile(
+                                      dense: true,
+                                      title: Text(_modelOptions[i]),
+                                      leading: Icon(
+                                        _modelController.text.trim() ==
+                                                _modelOptions[i]
+                                            ? Icons.radio_button_checked
+                                            : Icons.radio_button_off,
+                                      ),
+                                      onTap: () => _useModel(_modelOptions[i]),
+                                      trailing: SizedBox(
+                                        width: 88,
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Edit',
+                                              onPressed: () => _editModelOption(
+                                                _modelOptions[i],
+                                              ),
+                                              icon: const Icon(Icons.edit),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Delete',
+                                              onPressed: () =>
+                                                  _removeModelOption(
+                                                _modelOptions[i],
+                                              ),
+                                              icon: const Icon(Icons.delete),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
                           const SizedBox(height: 10),
+                          Text(
+                            'Quick select',
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: 6),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
                             children: [
                               ChoiceChip(
-                                label: const Text('gemini-2.5-flash'),
+                                label: const Text('Quick: 3.5 Flash'),
+                                selected: _modelController.text.trim() ==
+                                    'gemini-3.5-flash',
+                                onSelected: (_) =>
+                                    _useModel('gemini-3.5-flash'),
+                              ),
+                              ChoiceChip(
+                                label: const Text('Complex: 3.1 Pro'),
+                                selected: _modelController.text.trim() ==
+                                    'gemini-3.1-pro-preview',
+                                onSelected: (_) =>
+                                    _useModel('gemini-3.1-pro-preview'),
+                              ),
+                              ChoiceChip(
+                                label: const Text('Lite: 3.1 Flash-Lite'),
+                                selected: _modelController.text.trim() ==
+                                    'gemini-3.1-flash-lite',
+                                onSelected: (_) =>
+                                    _useModel('gemini-3.1-flash-lite'),
+                              ),
+                              ChoiceChip(
+                                label: const Text('Legacy: 2.5 Pro'),
+                                selected: _modelController.text.trim() ==
+                                    'gemini-2.5-pro',
+                                onSelected: (_) => _useModel('gemini-2.5-pro'),
+                              ),
+                              ChoiceChip(
+                                label: const Text('Legacy: 2.5 Flash'),
                                 selected: _modelController.text.trim() ==
                                     'gemini-2.5-flash',
                                 onSelected: (_) =>
                                     _useModel('gemini-2.5-flash'),
                               ),
                               ChoiceChip(
-                                label: const Text('gemini-1.5-flash'),
+                                label: const Text('Legacy: 1.5 Pro'),
+                                selected: _modelController.text.trim() ==
+                                    'gemini-1.5-pro',
+                                onSelected: (_) => _useModel('gemini-1.5-pro'),
+                              ),
+                              ChoiceChip(
+                                label: const Text('Legacy: 1.5 Flash'),
                                 selected: _modelController.text.trim() ==
                                     'gemini-1.5-flash',
                                 onSelected: (_) =>

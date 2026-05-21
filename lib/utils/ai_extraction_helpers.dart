@@ -8,8 +8,7 @@ String? cleanNullableString(dynamic value) {
 double? parseLooseDouble(dynamic value) {
   if (value == null) return null;
   if (value is num) return value.toDouble();
-  final text =
-      value.toString().replaceAll('£', '').replaceAll(RegExp(r'[$,\s]'), '');
+  final text = value.toString().replaceAll(RegExp(r'[£$,\\s]'), '');
   if (text.isEmpty || text.toLowerCase() == 'null') return null;
   return double.tryParse(text);
 }

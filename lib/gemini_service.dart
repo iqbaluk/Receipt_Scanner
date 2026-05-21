@@ -127,12 +127,25 @@ class GeminiSettingsCheckResult {
 
 class GeminiService {
   static const String defaultModel = 'gemini-2.5-flash';
+  static const List<String> selectableModels = [
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+  ];
   static const List<String> fallbackModels = [
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
     'gemini-2.5-flash',
     'gemini-1.5-flash',
   ];
   static const _apiKeyStorageKey = 'gemini_api_key';
   static const _modelStorageKey = 'gemini_model';
+  static const _modelOptionsStorageKey = 'gemini_model_options_json';
+  static const _lastScanModelStorageKey = 'gemini_last_scan_model';
   static const FlutterSecureStorage _storage = FlutterSecureStorage();
   static const bool strictPrivacyGuard = true;
   static final RegExp _emailRegex = RegExp(
@@ -185,6 +198,60 @@ class GeminiService {
       return model.isEmpty ? defaultModel : model;
     } catch (_) {
       return defaultModel;
+    }
+  }
+
+  static Future<List<String>> savedModelOptions() async {
+    try {
+      final raw = (await _storage.read(key: _modelOptionsStorageKey)) ?? '';
+      if (raw.trim().isEmpty) return List<String>.from(selectableModels);
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return List<String>.from(selectableModels);
+      final values = decoded
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
+      if (values.isEmpty) return List<String>.from(selectableModels);
+      return values;
+    } catch (_) {
+      return List<String>.from(selectableModels);
+    }
+  }
+
+  static Future<void> saveModelOptions(List<String> options) async {
+    final sanitized = options
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    if (sanitized.isEmpty) {
+      await _storage.delete(key: _modelOptionsStorageKey);
+      return;
+    }
+    await _storage.write(
+      key: _modelOptionsStorageKey,
+      value: jsonEncode(sanitized),
+    );
+  }
+
+  static Future<String?> lastScanModel() async {
+    try {
+      final model =
+          (await _storage.read(key: _lastScanModelStorageKey))?.trim() ?? '';
+      return model.isEmpty ? null : model;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _recordLastScanModel(String model) async {
+    final trimmed = model.trim();
+    if (trimmed.isEmpty) return;
+    try {
+      await _storage.write(key: _lastScanModelStorageKey, value: trimmed);
+    } catch (_) {
+      // Non-blocking telemetry hint; ignore storage failures.
     }
   }
 
@@ -388,6 +455,17 @@ class GeminiService {
                 localOcrInvoiceNumber.trim().isEmpty) &&
             ocrText != null &&
             ocrText.trim().isNotEmpty) {
+          final deterministicInvoice =
+              _extractInvoiceNumberDeterministic(ocrText);
+          if (deterministicInvoice != null &&
+              deterministicInvoice.trim().isNotEmpty) {
+            localOcrInvoiceNumber = deterministicInvoice;
+          }
+        }
+        if ((localOcrInvoiceNumber == null ||
+                localOcrInvoiceNumber.trim().isEmpty) &&
+            ocrText != null &&
+            ocrText.trim().isNotEmpty) {
           localOcrInvoiceNumber = _extractInvoiceNumberFromOcrText(ocrText);
         }
       }
@@ -437,7 +515,7 @@ Rules:
 - CRITICAL invoice_number extraction:
   - Scan the full page, not only headers. Check boxed sections, order details, margins, and footer blocks.
   - Find invoice number labels and extract the value immediately after the label on the same line, or next short line.
-  - Preferred labels: Invoice No, Invoice Number, Invoice Ne (OCR typo), Inv No, Inv Nr, Invoice #, Tax Invoice No, Document No, Bill No, Doc Ref.
+  - Preferred labels: Invoice No, Invoice Number, Invoice Ne (OCR typo), Invoce No (OCR typo), Inv No, Inv Nr, Invoice #, Tax Invoice No, Document No, Bill No, Doc Ref.
   - Also check variants: INV NO, INV#, Ref No, Reference No, Document Ref, Sales Invoice No.
   - If a label has no space before value (e.g. Invoice No:BNZ123), still extract BNZ123.
   - Keep invoice_number as printed (trim label text and surrounding punctuation only).
@@ -515,6 +593,7 @@ $hints
               parsed.data!.invoiceNumber!.trim().isEmpty) &&
           localOcrInvoiceNumber != null &&
           localOcrInvoiceNumber.trim().isNotEmpty) {
+        await _recordLastScanModel(settings.model);
         return ScanResult.success(
           patchedData.copyWith(invoiceNumber: localOcrInvoiceNumber),
         );
@@ -528,12 +607,29 @@ $hints
           imageBytes: imageBytes,
         );
         if (fallbackInvoiceNumber != null && fallbackInvoiceNumber.isNotEmpty) {
+          await _recordLastScanModel(settings.model);
           return ScanResult.success(
             patchedData.copyWith(invoiceNumber: fallbackInvoiceNumber),
           );
         }
       }
 
+      if (_needsLowQualityRescue(patchedData)) {
+        final rescue = await _rescueLowQualityExtraction(
+          apiKey: settings.apiKey,
+          modelName: settings.model,
+          imageBytes: imageBytes,
+          categories: categories,
+          ocrText: ocrText,
+          businessNature: businessNature,
+          businessDescription: businessDescription,
+        );
+        if (rescue != null) {
+          patchedData = _mergePrimaryWithRescue(patchedData, rescue);
+        }
+      }
+
+      await _recordLastScanModel(settings.model);
       return ScanResult.success(patchedData);
     } on TimeoutException catch (e) {
       return ScanResult.failure('Timeout: ${e.message}');
@@ -674,7 +770,11 @@ $hints
     if (cleaned.isEmpty) return null;
     cleaned = cleaned.replaceAll(RegExp(r'[^A-Za-z0-9\\-_/]'), '');
     if (cleaned.isEmpty) return null;
-    if (_containsSensitiveData(cleaned)) return null;
+    // Invoice IDs can be long alphanumeric values and may look "phone-like".
+    // Do not apply phone-number PII filtering to invoice numbers.
+    if (_emailRegex.hasMatch(cleaned) || _addressLineRegex.hasMatch(cleaned)) {
+      return null;
+    }
     // Reject obvious OCR fragments/non-invoice tokens that often appear
     // when the model returns part of the label (e.g. "oice").
     final lower = cleaned.toLowerCase();
@@ -791,13 +891,15 @@ Rules:
     if (normalized.isEmpty) return null;
     final compact = normalized.replaceAll(' ', '');
 
+    const invoiceLabelPattern =
+        r'(?:invoice|invoce|invoie|invoic|inv0ice|inv)\s*(?:no|ne|nr|num|number|#)';
     final patterns = <RegExp>[
       RegExp(
-        r'(?:invoice|inv)\s*(?:no|ne|nr|num|number|#)\.?\s*[:#-]*\s*([A-Z0-9][A-Z0-9/_-]{4,})',
+        '$invoiceLabelPattern\\.?\\s*[:#-]*\\s*([A-Z0-9][A-Z0-9/_-]{3,})',
         caseSensitive: false,
       ),
       RegExp(
-        r'(?:tax\s*invoice\s*(?:no|ne|nr|num|number|#)\.?|doc(?:ument)?\s*(?:ref|no|ne|nr|num|number)\.?|bill\s*(?:no|ne|nr|num|number)\.?)\s*[:#-]*\s*([A-Z0-9][A-Z0-9/_-]{4,})',
+        r'(?:tax\s*(?:invoice|invoce|invoie|invoic)\s*(?:no|ne|nr|num|number|#)\.?|doc(?:ument)?\s*(?:ref|no|ne|nr|num|number)\.?|bill\s*(?:no|ne|nr|num|number)\.?)\s*[:#-]*\s*([A-Z0-9][A-Z0-9/_-]{3,})',
         caseSensitive: false,
       ),
     ];
@@ -827,7 +929,7 @@ Rules:
     }
 
     final labelOnLineRegex = RegExp(
-      r'(invoice\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|inv\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|tax\s*invoice(?:\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#))?|doc(?:ument)?\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|ref)|bill\s*(?:no\.?|ne\.?|nr\.?|num\.?|number))',
+      r'((?:invoice|invoce|invoie|invoic)\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|inv\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|tax\s*(?:invoice|invoce|invoie|invoic)(?:\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#))?|doc(?:ument)?\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|ref)|bill\s*(?:no\.?|ne\.?|nr\.?|num\.?|number))',
       caseSensitive: false,
     );
     final negativeLabelRegex = RegExp(
@@ -835,7 +937,7 @@ Rules:
       caseSensitive: false,
     );
     final sameLineCaptureRegex = RegExp(
-      r'(?:invoice\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|inv\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|tax\s*invoice(?:\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#))?|doc(?:ument)?\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|ref)|bill\s*(?:no\.?|ne\.?|nr\.?|num\.?|number))\s*[:#-]*\s*([A-Z0-9][A-Z0-9 /_-]{3,40})',
+      r'(?:(?:invoice|invoce|invoie|invoic)\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|inv\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#)|tax\s*(?:invoice|invoce|invoie|invoic)(?:\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|#))?|doc(?:ument)?\s*(?:no\.?|ne\.?|nr\.?|num\.?|number|ref)|bill\s*(?:no\.?|ne\.?|nr\.?|num\.?|number))\s*[:#-]*\s*([A-Z0-9][A-Z0-9 /_-]{3,40})',
       caseSensitive: false,
     );
     final nextLineCandidateRegex = RegExp(
@@ -906,6 +1008,55 @@ Rules:
     return null;
   }
 
+  static String? _extractInvoiceNumberDeterministic(String? text) {
+    if (text == null) return null;
+    final lines = text
+        .split(RegExp(r'[\r\n]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return null;
+
+    final labelRegex = RegExp(
+      r'(?:(?:invoice|invoce|invoie|invoic|inv0ice|inv)\s*(?:no|ne|nr|num|number|#))',
+      caseSensitive: false,
+    );
+    final sameLineRegex = RegExp(
+      r'(?:(?:invoice|invoce|invoie|invoic|inv0ice|inv)\s*(?:no|ne|nr|num|number|#))\s*[:#-]*\s*([A-Z0-9][A-Z0-9/_-]{2,40})',
+      caseSensitive: false,
+    );
+    final blockedLineRegex = RegExp(
+      r'(vat\s*no|company\s*no|route|pod|tel|phone|account\s*no|customer\s*ref)',
+      caseSensitive: false,
+    );
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (!labelRegex.hasMatch(line)) continue;
+      if (blockedLineRegex.hasMatch(line)) continue;
+
+      final same = sameLineRegex.firstMatch(line)?.group(1)?.trim();
+      final sanitizedSame = _sanitizeInvoiceNumber(same);
+      if (_isLikelyInvoiceNumberCandidate(sanitizedSame)) {
+        return sanitizedSame;
+      }
+
+      if (i + 1 < lines.length) {
+        final next = lines[i + 1];
+        if (blockedLineRegex.hasMatch(next)) continue;
+        final m = RegExp(r'^([A-Z0-9][A-Z0-9/_-]{2,40})$', caseSensitive: false)
+            .firstMatch(next);
+        final nextValue = m?.group(1)?.trim();
+        final sanitizedNext = _sanitizeInvoiceNumber(nextValue);
+        if (_isLikelyInvoiceNumberCandidate(sanitizedNext)) {
+          return sanitizedNext;
+        }
+      }
+    }
+
+    return null;
+  }
+
   static String? _normalizeInvoiceCandidate(String? value) {
     if (value == null) return null;
     final cleaned = value.trim();
@@ -943,7 +1094,7 @@ Rules:
   static double? _extractPaidAmountByRegex(String text) {
     final normalized = text.replaceAll('\n', ' ');
     final paidRegex = RegExp(
-      r'(?:total\s*to\s*pay|amount\s*paid|paid|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|£|Â£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
+      r'(?:total\s*to\s*pay|amount\s*paid|paid|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
     final match = paidRegex.firstMatch(normalized);
@@ -954,7 +1105,7 @@ Rules:
   static double? _extractBalanceDueByRegex(String text) {
     final normalized = text.replaceAll('\n', ' ');
     final dueRegex = RegExp(
-      r'(?:balance\s*due|amount\s*due|outstanding)\s*[:#-]?\s*(?:gbp|£|Â£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
+      r'(?:balance\s*due|amount\s*due|outstanding)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
     final match = dueRegex.firstMatch(normalized);
@@ -1015,6 +1166,128 @@ Rules:
     }
     final single = cleanNullableString(value);
     return single == null ? const [] : <String>[single];
+  }
+
+  static bool _needsLowQualityRescue(ReceiptData data) {
+    final missingInvoice =
+        data.invoiceNumber == null || data.invoiceNumber!.trim().isEmpty;
+    final missingDate = data.date == null;
+    final missingSupplier =
+        data.supplier == null || data.supplier!.trim().isEmpty;
+    final missingGross = data.gross == null || data.gross! <= 0;
+    final missingCategory =
+        data.category == null || data.category!.trim().isEmpty;
+    return missingInvoice ||
+        missingDate ||
+        missingSupplier ||
+        missingGross ||
+        missingCategory;
+  }
+
+  static ReceiptData _mergePrimaryWithRescue(
+    ReceiptData primary,
+    ReceiptData rescue,
+  ) {
+    final mergedWarnings = <String>{
+      ...primary.extractionWarnings,
+      ...rescue.extractionWarnings,
+      'Low-quality rescue pass applied',
+    }.toList();
+    return ReceiptData(
+      date: primary.date ?? rescue.date,
+      invoiceNumber: (primary.invoiceNumber?.trim().isNotEmpty ?? false)
+          ? primary.invoiceNumber
+          : rescue.invoiceNumber,
+      supplier: (primary.supplier?.trim().isNotEmpty ?? false)
+          ? primary.supplier
+          : rescue.supplier,
+      category: (primary.category?.trim().isNotEmpty ?? false)
+          ? primary.category
+          : rescue.category,
+      categoryConfidence:
+          primary.categoryConfidence ?? rescue.categoryConfidence,
+      vat: primary.vat ?? rescue.vat,
+      gross: primary.gross ?? rescue.gross,
+      paidAmount: primary.paidAmount ?? rescue.paidAmount,
+      net: primary.net ?? rescue.net,
+      rawNotes: (primary.rawNotes?.trim().isNotEmpty ?? false)
+          ? primary.rawNotes
+          : rescue.rawNotes,
+      extractionWarnings: mergedWarnings,
+    );
+  }
+
+  static Future<ReceiptData?> _rescueLowQualityExtraction({
+    required String apiKey,
+    required String modelName,
+    required Uint8List imageBytes,
+    required List<String> categories,
+    String? ocrText,
+    String? businessNature,
+    String? businessDescription,
+  }) async {
+    try {
+      final model = GenerativeModel(
+        model: modelName,
+        apiKey: apiKey,
+        generationConfig: GenerationConfig(
+          temperature: 0,
+          responseMimeType: 'application/json',
+        ),
+      );
+
+      final context = [
+        businessNature?.trim() ?? '',
+        businessDescription?.trim() ?? '',
+      ].where((v) => v.isNotEmpty).join(' | ');
+      final ocrHint = (ocrText?.trim().isNotEmpty ?? false)
+          ? '\nOCR text hint (may be noisy):\n${ocrText!.trim()}'
+          : '';
+
+      final prompt = '''
+Rescue extraction mode for low-sharp receipt images.
+Goal: recover missing critical fields with conservative confidence.
+${context.isEmpty ? '' : 'Business profile context: $context'}
+
+Return strict JSON only:
+{
+  "date": "YYYY-MM-DD or null",
+  "invoice_number": "string or null",
+  "supplier": "string or null",
+  "category": "one of allowed categories or null",
+  "category_confidence": "0-100 number or null",
+  "vat": "number or null",
+  "gross": "number or null",
+  "paid_amount": "number or null",
+  "net": "number or null",
+  "notes": "string or null",
+  "extraction_warnings": "array of strings"
+}
+
+Rules:
+- Prioritize accuracy over completeness; do not guess.
+- If unclear, return null for field.
+- Allowed categories: ${categories.join(', ')}.
+- Use invoice labels and nearby totals to infer values.
+- Add warning "Low image quality" if text appears blurry/uncertain.
+$ocrHint
+''';
+
+      final response = await model.generateContent([
+        Content.multi([
+          TextPart(prompt),
+          DataPart('image/jpeg', imageBytes),
+        ]),
+      ]).timeout(const Duration(seconds: 18));
+
+      final text = response.text?.trim() ?? '';
+      if (text.isEmpty) return null;
+      final parsed = _parseJsonResponse(text, categories);
+      if (!parsed.success || parsed.data == null) return null;
+      return parsed.data;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
