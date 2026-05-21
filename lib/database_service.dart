@@ -31,6 +31,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'utils/text_normalizers.dart';
 
+part 'database/schema_migrations.dart';
+
 class Project {
   final int? id;
   final String name;
@@ -735,387 +737,59 @@ class DatabaseService {
     }
   }
 
-  static Future<void> _createProjectsTable(Database db) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $_projectsTable (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        address TEXT,
-        start_date TEXT,
-        budget REAL,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-  }
+  static Future<void> _createProjectsTable(Database db) async =>
+      _dbCreateProjectsTable(db);
 
   static Future<void> _createDuplicateIntegrityTriggers(
-      DatabaseExecutor db) async {
-    final existingInvoiceSql = _normalizedInvoiceSql('r.invoice_number');
-    final newInvoiceSql = _normalizedInvoiceSql('NEW.invoice_number');
-    final existingSupplierSql = _normalizedSupplierSql('r.supplier');
-    final newSupplierSql = _normalizedSupplierSql('NEW.supplier');
-
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_invoice_signature_insert
-      BEFORE INSERT ON $_table
-      WHEN TRIM(COALESCE(NEW.invoice_number, '')) <> ''
-      BEGIN
-        SELECT RAISE(ABORT, 'DUPLICATE_INVOICE_SIGNATURE')
-        WHERE EXISTS (
-          SELECT 1
-          FROM $_table r
-          WHERE $existingInvoiceSql = $newInvoiceSql
-            AND $existingSupplierSql = $newSupplierSql
-            AND r.date = NEW.date
-            AND ABS(r.gross - NEW.gross) < 0.005
-        );
-      END;
-    ''');
-
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_invoice_signature_update
-      BEFORE UPDATE ON $_table
-      WHEN TRIM(COALESCE(NEW.invoice_number, '')) <> ''
-      BEGIN
-        SELECT RAISE(ABORT, 'DUPLICATE_INVOICE_SIGNATURE')
-        WHERE EXISTS (
-          SELECT 1
-          FROM $_table r
-          WHERE r.id != NEW.id
-            AND $existingInvoiceSql = $newInvoiceSql
-            AND $existingSupplierSql = $newSupplierSql
-            AND r.date = NEW.date
-            AND ABS(r.gross - NEW.gross) < 0.005
-        );
-      END;
-    ''');
-
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_supplier_date_gross_insert
-      BEFORE INSERT ON $_table
-      BEGIN
-        SELECT RAISE(ABORT, 'DUPLICATE_SUPPLIER_DATE_GROSS')
-        WHERE EXISTS (
-          SELECT 1
-          FROM $_table r
-          WHERE $existingSupplierSql = $newSupplierSql
-            AND r.date = NEW.date
-            AND ABS(r.gross - NEW.gross) < 0.005
-        );
-      END;
-    ''');
-
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_supplier_date_gross_update
-      BEFORE UPDATE ON $_table
-      BEGIN
-        SELECT RAISE(ABORT, 'DUPLICATE_SUPPLIER_DATE_GROSS')
-        WHERE EXISTS (
-          SELECT 1
-          FROM $_table r
-          WHERE r.id != NEW.id
-            AND $existingSupplierSql = $newSupplierSql
-            AND r.date = NEW.date
-            AND ABS(r.gross - NEW.gross) < 0.005
-        );
-      END;
-    ''');
-  }
+    DatabaseExecutor db,
+  ) async =>
+      _dbCreateDuplicateIntegrityTriggers(db);
 
   static Future<void> _refreshDuplicateIntegrityTriggers(
-      DatabaseExecutor db) async {
-    await db.execute(
-        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_invoice_signature_insert');
-    await db.execute(
-        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_invoice_signature_update');
-    await db.execute(
-        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_supplier_date_gross_insert');
-    await db.execute(
-        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_supplier_date_gross_update');
-    await _createDuplicateIntegrityTriggers(db);
-  }
+    DatabaseExecutor db,
+  ) async =>
+      _dbRefreshDuplicateIntegrityTriggers(db);
 
-  static Future<void> _createCombinedReportView(DatabaseExecutor db) async {
-    await db.execute('DROP VIEW IF EXISTS $_combinedReportView');
-    await db.execute('''
-      CREATE VIEW IF NOT EXISTS $_combinedReportView AS
-      SELECT
-        r.id AS receipt_id,
-        r.project_id AS project_id,
-        p.name AS project_name,
-        r.category AS category,
-        r.gross AS gross,
-        r.date AS invoice_date,
-        substr(r.created_at, 1, 10) AS scan_date
-      FROM $_table r
-      LEFT JOIN $_projectsTable p ON p.id = r.project_id
-      WHERE r.project_id IS NOT NULL
-    ''');
-  }
+  static Future<void> _createCombinedReportView(DatabaseExecutor db) async =>
+      _dbCreateCombinedReportView(db);
 
-  static Future<void> _createCategoriesTable(Database db) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $_categoriesTable (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-  }
+  static Future<void> _createCategoriesTable(Database db) async =>
+      _dbCreateCategoriesTable(db);
 
-  static Future<void> _createCompanyProfileTable(Database db) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $_companyTable (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        client_name TEXT NOT NULL,
-        company_code TEXT NOT NULL DEFAULT '',
-        business_nature TEXT NOT NULL,
-        business_description TEXT NOT NULL,
-        financial_year_start_month INTEGER NOT NULL DEFAULT 4,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-  }
+  static Future<void> _createCompanyProfileTable(Database db) async =>
+      _dbCreateCompanyProfileTable(db);
 
-  static Future<void> _seedDefaultCategories(DatabaseExecutor db) async {
-    final now = DateTime.now().toIso8601String();
-    for (final name in defaultCategories) {
-      await db.insert(
-        _categoriesTable,
-        {
-          'name': name,
-          'created_at': now,
-          'updated_at': now,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-    }
-  }
+  static Future<void> _seedDefaultCategories(DatabaseExecutor db) async =>
+      _dbSeedDefaultCategories(db);
 
   static Future<void> _migrateToBusinessExpenseCategories(
-      DatabaseExecutor db) async {
-    final now = DateTime.now().toIso8601String();
-    const legacyToNew = <String, String>{
-      'Material': 'Purchases',
-      'Subcontractor': 'Subcontractor',
-      'Utility Bills': 'Utility',
-      'Travel': 'Travelling',
-      'Insurance': 'Fees',
-      'Other': 'Sundries',
-    };
-
-    for (final entry in legacyToNew.entries) {
-      await db.rawUpdate(
-        '''
-        UPDATE $_table
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-        ''',
-        [entry.value, now, entry.key],
-      );
-    }
-
-    const businessV9Categories = <String>[
-      'Purchases',
-      'Subcontractor',
-      'Commissions',
-      'Advertisement',
-      'Salary',
-      'Rent',
-      'Rates',
-      'Utility',
-      'Travelling',
-      'Subsistence',
-      'Telephone',
-      'Computer',
-      'Fees',
-      'Repair',
-      'Sundries',
-    ];
-
-    for (final category in businessV9Categories) {
-      await db.rawUpdate(
-        '''
-        UPDATE $_table
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-        ''',
-        [category, now, category],
-      );
-    }
-
-    final normalizedDefaults =
-        businessV9Categories.map((c) => c.toLowerCase()).toList();
-    final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE TRIM(COALESCE(category, '')) = ''
-         OR LOWER(TRIM(category)) NOT IN ($placeholders)
-      ''',
-      ['Sundries', now, ...normalizedDefaults],
-    );
-
-    await db.delete(_categoriesTable);
-    final seedNow = DateTime.now().toIso8601String();
-    for (final name in businessV9Categories) {
-      await db.insert(
-        _categoriesTable,
-        {
-          'name': name,
-          'created_at': seedNow,
-          'updated_at': seedNow,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-    }
-  }
+    DatabaseExecutor db,
+  ) async =>
+      _dbMigrateToBusinessExpenseCategories(db);
 
   static Future<void> _migrateToCondensedMainCategories(
-      DatabaseExecutor db) async {
-    final now = DateTime.now().toIso8601String();
-    const oldToMain = <String, String>{
-      'Purchases': 'Purchases',
-      'Subcontractor': 'Staff & Contractors',
-      'Commissions': 'Professional Fees',
-      'Advertisement': 'Marketing',
-      'Salary': 'Staff & Contractors',
-      'Rent': 'Rent & Rates',
-      'Rates': 'Rent & Rates',
-      'Utility': 'Utilities',
-      'Premises & Utilities': 'Rent & Rates',
-      'Travelling': 'Travel',
-      'Subsistence': 'Travel',
-      'Telephone': 'Office Admin',
-      'Computer': 'Office Admin',
-      'Fees': 'Professional Fees',
-      'Repair': 'Repair & Maintenance',
-      'Sundries': 'Sundries',
-      'Insurance': 'Insurance',
-      'Charity': 'Donations & Charity',
-      'Charity Donation': 'Donations & Charity',
-      'Donations & Charity': 'Donations & Charity',
-    };
-
-    for (final entry in oldToMain.entries) {
-      await db.rawUpdate(
-        '''
-        UPDATE $_table
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-        ''',
-        [entry.value, now, entry.key],
-      );
-    }
-
-    final normalizedDefaults =
-        defaultCategories.map((c) => c.toLowerCase()).toList();
-    final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE TRIM(COALESCE(category, '')) = ''
-         OR LOWER(TRIM(category)) NOT IN ($placeholders)
-      ''',
-      ['Sundries', now, ...normalizedDefaults],
-    );
-
-    await db.delete(_categoriesTable);
-    await _seedDefaultCategories(db);
-  }
+    DatabaseExecutor db,
+  ) async =>
+      _dbMigrateToCondensedMainCategories(db);
 
   static Future<void> _migratePremisesUtilitiesSplit(
-      DatabaseExecutor db) async {
-    final now = DateTime.now().toIso8601String();
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      ['Rent & Rates', now, 'Premises & Utilities'],
-    );
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      ['Utilities', now, 'Utility'],
-    );
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      ['Rent & Rates', now, 'Rent'],
-    );
-    await db.rawUpdate(
-      '''
-      UPDATE $_table
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      ['Rent & Rates', now, 'Rates'],
-    );
+    DatabaseExecutor db,
+  ) async =>
+      _dbMigratePremisesUtilitiesSplit(db);
 
-    await db.delete(
-      _categoriesTable,
-      where: 'LOWER(TRIM(name)) = LOWER(?)',
-      whereArgs: ['Premises & Utilities'],
-    );
-    await _seedDefaultCategories(db);
-  }
-
-  static Future<void> _migrateToPnlCategoriesV15(DatabaseExecutor db) async {
-    // For v15 we only refresh master categories.
-    // Receipt remapping is intentionally skipped because user is resetting test data.
-    await db.delete(_categoriesTable);
-    await _seedDefaultCategories(db);
-  }
+  static Future<void> _migrateToPnlCategoriesV15(DatabaseExecutor db) async =>
+      _dbMigrateToPnlCategoriesV15(db);
 
   static Future<void> _renameDefaultProjectToOperation(
-      DatabaseExecutor db) async {
-    await db.rawUpdate(
-      '''
-      UPDATE $_projectsTable
-      SET name = ?, updated_at = ?
-      WHERE LOWER(TRIM(name)) = LOWER(?)
-      ''',
-      ['General Operation', DateTime.now().toIso8601String(), 'General'],
-    );
-  }
+    DatabaseExecutor db,
+  ) async =>
+      _dbRenameDefaultProjectToOperation(db);
 
-  static Future<int> _insertDefaultProject(Database db) async {
-    final existing = await db.query(
-      _projectsTable,
-      where: 'LOWER(TRIM(name)) = LOWER(?) OR LOWER(TRIM(name)) = LOWER(?)',
-      whereArgs: ['General Operation', 'General'],
-      limit: 1,
-    );
-    if (existing.isNotEmpty) return existing.first['id'] as int;
-    final now = DateTime.now().toIso8601String();
-    return db.insert(_projectsTable, {
-      'name': 'General Operation',
-      'address': null,
-      'start_date': null,
-      'budget': null,
-      'notes': 'Default operation for existing receipts',
-      'created_at': now,
-      'updated_at': now,
-    });
-  }
+  static Future<int> _insertDefaultProject(Database db) async =>
+      _dbInsertDefaultProject(db);
 
-  static Future<int> _defaultProjectId(Database db) async {
-    return _insertDefaultProject(db);
-  }
+  static Future<int> _defaultProjectId(Database db) async =>
+      _dbDefaultProjectId(db);
 
   static Future<List<Project>> getProjects() async {
     final db = await _open();
@@ -1865,7 +1539,7 @@ class DatabaseService {
   /// If invoice number is empty, fallback to supplier+date+gross.
   /// Used to warn about likely duplicates at save time.
   /// Returns the matching existing receipt(s), or empty list if none.
-  /// Optionally exclude a specific id (used when editing £ exclude self).
+  /// Optionally exclude a specific id (used when editing Â£ exclude self).
   static Future<List<Receipt>> findPossibleDuplicates({
     String? invoiceNumber,
     required String supplier,
