@@ -433,8 +433,7 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
     }
   }
 
-  String _money(double value) =>
-      formatAppMoney(value, decimals: 0, withSymbol: false);
+  String _money(double value) => formatAppMoney(value, decimals: 0);
 
   String _moneyOrDash(double value) {
     if (value.abs() < 0.005) return '-';

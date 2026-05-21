@@ -341,7 +341,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
-            '${_rangeLabel()} · ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
+            '${_rangeLabel()} | ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
             style: TextStyle(
               fontSize: 13,
               color: colorScheme.onPrimaryContainer,
@@ -350,97 +350,6 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
           ),
         ),
       ],
-    );
-  }
-
-  // ignore: unused_element
-  Widget _buildSummaryCards(ProjectReport report, ColorScheme colorScheme) {
-    return Row(
-      children: [
-        Expanded(
-            child: _buildStatCard(
-          label: 'Receipts',
-          value: report.receiptCount.toString(),
-          icon: Icons.receipt_long,
-          colorScheme: colorScheme,
-        )),
-        const SizedBox(width: 12),
-        Expanded(
-            child: _buildStatCard(
-          label: 'Net Total',
-          value: formatAppMoney(report.totalNet),
-          icon: Icons.account_balance_wallet,
-          colorScheme: colorScheme,
-        )),
-        const SizedBox(width: 12),
-        Expanded(
-            child: _buildStatCard(
-          label: 'VAT',
-          value: formatAppMoney(report.totalVat),
-          icon: Icons.money_off,
-          colorScheme: colorScheme,
-        )),
-        const SizedBox(width: 12),
-        Expanded(
-            child: _buildStatCard(
-          label: 'Gross Total',
-          value: formatAppMoney(report.totalGross),
-          icon: Icons.summarize,
-          highlight: true,
-          colorScheme: colorScheme,
-        )),
-      ],
-    );
-  }
-
-  Widget _buildStatCard({
-    required String label,
-    required String value,
-    required IconData icon,
-    required ColorScheme colorScheme,
-    bool highlight = false,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: highlight
-                    ? colorScheme.primary.withValues(alpha: 0.12)
-                    : colorScheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Icon(icon,
-                  size: 18,
-                  color: highlight ? colorScheme.primary : colorScheme.outline),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-                color: highlight ? colorScheme.primary : colorScheme.onSurface,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: colorScheme.onSurfaceVariant,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

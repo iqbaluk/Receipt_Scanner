@@ -8,15 +8,23 @@ class StartupSplashPage extends StatefulWidget {
 }
 
 class _StartupSplashPageState extends State<StartupSplashPage> {
+  Timer? _navTimer;
+
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 2), () {
+    _navTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ProjectListPage()),
       );
     });
+  }
+
+  @override
+  void dispose() {
+    _navTimer?.cancel();
+    super.dispose();
   }
 
   @override

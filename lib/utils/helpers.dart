@@ -5,7 +5,6 @@ String formatAppDate(DateTime value) => DateFormat('dd/MM/yyyy').format(value);
 String formatAppMoney(
   num value, {
   int decimals = 2,
-  bool withSymbol = false,
 }) {
   final pattern = decimals == 0 ? '#,##0' : '#,##0.${'0' * decimals}';
   final formatted = NumberFormat(pattern).format(value);
@@ -73,59 +72,34 @@ Future<void> _showHardDuplicateBlockedDialog(
   BuildContext context, {
   Receipt? existing,
 }) async {
-  if (!context.mounted) return;
-  final existingRef = existing == null
-      ? null
-      : '#${(existing.scanNo ?? existing.id ?? 0).toString().padLeft(5, '0')}';
-  final details = existing == null
-      ? null
-      : '${existing.supplier}\n'
-          'Date: ${formatAppDate(existing.date)}\n'
-          'Gross: ${formatAppMoney(existing.gross)}';
-
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (ctx) => AlertDialog(
-      icon: Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 32),
-      title: const Text('Duplicate receipt found'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            existingRef == null
-                ? 'A receipt with the same invoice no and supplier already exists.'
-                : 'A receipt with the same invoice no and supplier already exists as $existingRef.',
-          ),
-          if (details != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                border: Border.all(color: Colors.orange.shade200),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(details),
-            ),
-          ],
-          const SizedBox(height: 10),
-          const Text('This duplicate cannot be saved.'),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('OK'),
-        ),
-      ],
-    ),
+  await _showDuplicateBlockedDialog(
+    context,
+    existing: existing,
+    messageWithRef:
+        'A receipt with the same invoice no and supplier already exists as {ref}.',
+    messageWithoutRef:
+        'A receipt with the same invoice no and supplier already exists.',
   );
 }
 
 Future<void> _showSupplierDateGrossDuplicateBlockedDialog(
   BuildContext context, {
+  Receipt? existing,
+}) async {
+  await _showDuplicateBlockedDialog(
+    context,
+    existing: existing,
+    messageWithRef:
+        'A receipt with the same supplier, date, and gross already exists as {ref}.',
+    messageWithoutRef:
+        'A receipt with the same supplier, date, and gross already exists.',
+  );
+}
+
+Future<void> _showDuplicateBlockedDialog(
+  BuildContext context, {
+  required String messageWithRef,
+  required String messageWithoutRef,
   Receipt? existing,
 }) async {
   if (!context.mounted) return;
@@ -150,8 +124,8 @@ Future<void> _showSupplierDateGrossDuplicateBlockedDialog(
         children: [
           Text(
             existingRef == null
-                ? 'A receipt with the same supplier, date, and gross already exists.'
-                : 'A receipt with the same supplier, date, and gross already exists as $existingRef.',
+                ? messageWithoutRef
+                : messageWithRef.replaceAll('{ref}', existingRef),
           ),
           if (details != null) ...[
             const SizedBox(height: 12),

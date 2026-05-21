@@ -11,6 +11,7 @@
 // ============================================================
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:file_picker/file_picker.dart';
@@ -302,12 +303,12 @@ Widget buildPageTitleBanner(
             padding: const EdgeInsets.all(1),
             child: useLogo
                 ? ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.asset(
-                    'assets/app_logo.png',
-                    fit: BoxFit.cover,
-                  ),
-                )
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.asset(
+                      'assets/app_logo.png',
+                      fit: BoxFit.cover,
+                    ),
+                  )
                 : Icon(icon, color: colorScheme.onPrimary),
           ),
         ),
