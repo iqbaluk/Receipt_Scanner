@@ -30,7 +30,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load projects: $e')),
+        SnackBar(content: Text('Could not load operations: $e')),
       );
     }
   }
@@ -44,59 +44,13 @@ class _ProjectListPageState extends State<ProjectListPage> {
     await _loadProjects();
   }
 
-  Future<void> _openAllHistory() async {
+  Future<void> _openReportsHub({Project? initialProject}) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const ReceiptHistoryPage(),
+        builder: (_) => ReportsHubPage(initialProject: initialProject),
       ),
     );
     await _loadProjects();
-  }
-
-  Future<void> _openCombinedReport() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CombinedReportPage(
-          initialRange: ExportRange.allTime(),
-          initialDateBasis: DateBasis.invoiceDate,
-        ),
-      ),
-    );
-    await _loadProjects();
-  }
-
-  Future<void> _openHistoryFor(Project project) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ReceiptHistoryPage(project: project),
-      ),
-    );
-    await _loadProjects();
-  }
-
-  Future<void> _openReports(Project project) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProjectReportPage(project: project),
-      ),
-    );
-    await _loadProjects();
-  }
-
-  Future<void> _openCategories() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const CategoryManagerPage(),
-      ),
-    );
-  }
-
-  Future<void> _openGeminiSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const GeminiSettingsPage(),
-      ),
-    );
   }
 
   Future<void> _openSettings() async {
@@ -117,7 +71,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final draft = await showDialog<Project>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Create project'),
+        title: const Text('Create operation'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -126,7 +80,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 controller: name,
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Project name *'),
+                decoration:
+                    const InputDecoration(labelText: 'Operation name *'),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -141,7 +96,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
                     const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(
                   labelText: 'Budget',
-                  prefixText: '£ ',
                 ),
               ),
               const SizedBox(height: 12),
@@ -194,135 +148,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       if (!mounted) return;
       await _openProject(created);
     } catch (e) {
-      _showProjectMessage('Could not create project: $e');
-    }
-  }
-
-  Future<Project?> _showProjectEditDialog(Project project) async {
-    final name = TextEditingController(text: project.name);
-    final address = TextEditingController(text: project.address ?? '');
-    final budget = TextEditingController(
-      text: project.budget == null ? '' : project.budget!.toStringAsFixed(2),
-    );
-    final notes = TextEditingController(text: project.notes ?? '');
-
-    final result = await showDialog<Project>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit project'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                autofocus: true,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Project name *'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: address,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Address'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: budget,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Budget',
-                  prefixText: '£ ',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final trimmedName = name.text.trim();
-              if (trimmedName.isEmpty) return;
-              Navigator.pop(
-                ctx,
-                Project(
-                  id: project.id,
-                  name: trimmedName,
-                  address:
-                      address.text.trim().isEmpty ? null : address.text.trim(),
-                  budget: double.tryParse(budget.text),
-                  notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
-                  createdAt: project.createdAt,
-                  updatedAt: project.updatedAt,
-                ),
-              );
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      name.dispose();
-      address.dispose();
-      budget.dispose();
-      notes.dispose();
-    });
-    return result;
-  }
-
-  Future<void> _editProject(Project project) async {
-    final updated = await _showProjectEditDialog(project);
-    if (updated == null) return;
-    try {
-      await DatabaseService.updateProject(updated);
-      if (!mounted) return;
-      await _loadProjects();
-    } catch (e) {
-      _showProjectMessage('Could not update project: $e');
-    }
-  }
-
-  Future<void> _deleteProject(Project project) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete project?'),
-        content: Text(
-          'Delete "${project.name}"?\n\nProjects with saved receipts cannot be deleted until their receipts are removed.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await DatabaseService.deleteProject(project);
-      if (!mounted) return;
-      await _loadProjects();
-    } catch (e) {
-      _showProjectMessage(e.toString().replaceFirst('Bad state: ', ''));
+      _showProjectMessage('Could not create operation: $e');
     }
   }
 
@@ -336,134 +162,247 @@ class _ProjectListPageState extends State<ProjectListPage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    IconButton topAction({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onPressed,
+      Color? color,
+    }) {
+      return IconButton(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+        icon: Icon(icon, color: color),
+      );
+    }
+
     return Scaffold(
       backgroundColor: colorScheme.surfaceContainerLow,
       appBar: AppBar(
-        title: const Text('Projects'),
         actions: [
-          IconButton(
-            onPressed: _openCombinedReport,
-            icon: const Icon(Icons.table_chart),
-            tooltip: 'Combined report',
+          topAction(
+            onPressed: _openReportsHub,
+            icon: Icons.insights_outlined,
+            tooltip: 'Reports hub',
           ),
-          IconButton(
-            onPressed: _openAllHistory,
-            icon: const Icon(Icons.manage_search),
-            tooltip: 'Invoice list',
-          ),
-          IconButton(
-            onPressed: _openCategories,
-            icon: const Icon(Icons.category),
-            tooltip: 'Categories',
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Project actions',
-            icon: const Icon(Icons.more_vert),
-            onSelected: (value) {
-              switch (value) {
-                case 'create':
-                  _createProjectFromDialog();
-                  break;
-                case 'gemini_settings':
-                  _openGeminiSettings();
-                  break;
-                case 'settings':
-                  _openSettings();
-                  break;
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 'create',
-                child: ListTile(
-                  leading: Icon(Icons.add),
-                  title: Text('Create project'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'gemini_settings',
-                child: ListTile(
-                  leading: Icon(Icons.auto_awesome),
-                  title: Text('Gemini settings'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: ListTile(
-                  leading: Icon(Icons.settings),
-                  title: Text('Management'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
+          topAction(
+            onPressed: _openSettings,
+            icon: Icons.settings,
+            tooltip: 'Management',
           ),
         ],
       ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : _projects.isEmpty
-                ? _buildEmptyState()
-                : ListView(
-                    padding: const EdgeInsets.all(20),
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                children: [
+                  buildPageTitleBanner(
+                    context,
+                    title: 'Operations',
+                    icon: Icons.business_center_outlined,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildHeroHeader(),
+                  const SizedBox(height: 14),
+                  Row(
                     children: [
-                      Text(
-                        'Tap a project to start scanning receipts',
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+                      Icon(
+                        Icons.camera_alt_outlined,
+                        size: 22,
+                        color: colorScheme.onSurfaceVariant,
                       ),
-                      const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          for (final project in _projects)
-                            _ProjectCard(
-                              project: project,
-                              onTap: () => _openProject(project),
-                              onEdit: () => _editProject(project),
-                              onDelete: () => _deleteProject(project),
-                              onHistory: () => _openHistoryFor(project),
-                              onReports: () => _openReports(project),
-                            ),
-                        ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Select an operation to begin scanning',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  if (_projects.isEmpty)
+                    _buildEmptyState()
+                  else
+                    for (final project in _projects) ...[
+                      _ProjectCard(
+                        project: project,
+                        onTap: () => _openProject(project),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                ],
+              ),
       ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            border: Border(
+              top: BorderSide(color: colorScheme.outlineVariant),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: SystemNavigator.pop,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colorScheme.error,
+                    foregroundColor: colorScheme.onError,
+                  ),
+                  icon: const Icon(Icons.exit_to_app),
+                  label: const Text('Close App'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 56,
+                height: 52,
+                child: FilledButton(
+                  onPressed: _createProjectFromDialog,
+                  child: const Icon(Icons.add),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroHeader() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final totalReceipts = _projects.fold<int>(
+      0,
+      (sum, project) => sum + project.receiptCount,
+    );
+    final totalGross = _projects.fold<double>(
+      0,
+      (sum, project) => sum + project.totalGross,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      decoration: BoxDecoration(
+        gradient: AppDecor.heroGradient(colorScheme),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: AppDecor.softShadow(colorScheme),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Text(
+              'Summary Total',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatBlock('Receipts', '$totalReceipts'),
+              ),
+              _buildStatDivider(colorScheme),
+              Expanded(
+                child: _buildStatBlock('Gross', formatAppMoney(totalGross)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatBlock(String label, String value) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: colorScheme.onPrimary.withValues(alpha: 0.92),
+            fontSize: 11.5,
+            height: 1.2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: colorScheme.onPrimary,
+            fontWeight: FontWeight.w800,
+            fontSize: 16.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatDivider(ColorScheme colorScheme) {
+    return Container(
+      width: 1,
+      height: 54,
+      color: colorScheme.onPrimary.withValues(alpha: 0.2),
     );
   }
 
   Widget _buildEmptyState() {
     final colorScheme = Theme.of(context).colorScheme;
-    return Center(
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.folder_open, size: 72, color: colorScheme.outlineVariant),
-          const SizedBox(height: 16),
+          Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.folder_open_rounded,
+              size: 38,
+              color: colorScheme.onPrimaryContainer,
+            ),
+          ),
+          const SizedBox(height: 14),
           Text(
-            'No projects yet',
+            'No operations yet',
             style: TextStyle(
               fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Create your first project to start\nscanning and tracking receipts.',
+            'Tap + to create your first operation.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: colorScheme.outline),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Use Project actions to create one.',
-            style: TextStyle(color: colorScheme.outline),
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -474,18 +413,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
 class _ProjectCard extends StatelessWidget {
   final Project project;
   final VoidCallback onTap;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
-  final VoidCallback? onHistory;
-  final VoidCallback? onReports;
 
   const _ProjectCard({
     required this.project,
     required this.onTap,
-    this.onEdit,
-    this.onDelete,
-    this.onHistory,
-    this.onReports,
   });
 
   @override
@@ -496,146 +427,100 @@ class _ProjectCard extends StatelessWidget {
       colorScheme.secondary,
       colorScheme.tertiary,
       const Color(0xFF0E7490),
-      const Color(0xFF7C3AED),
+      const Color(0xFF1D4ED8),
     ];
     final accent =
         accents[(project.id ?? project.name.length) % accents.length];
     final budget = project.budget;
     final total = project.totalGross;
+    final totalText = NumberFormat('#,##0.00').format(total);
     final subtitle = [
       if (project.address != null) project.address!,
-      '${project.receiptCount} receipts',
-      if (budget != null) '£${budget.toStringAsFixed(2)} budget',
-    ].join(' £ ');
+      if (budget != null) '${budget.toStringAsFixed(2)} budget',
+    ].join(' • ');
 
-    return SizedBox(
-      width: 220,
-      child: Card(
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  height: 5,
-                  width: 54,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        project.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
-                          color: colorScheme.onSurface,
-                        ),
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border(
+              left: BorderSide(color: accent, width: 3),
+            ),
+          ),
+          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    height: 6,
+                    width: 52,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [accent, accent.withValues(alpha: 0.45)],
                       ),
+                      borderRadius: BorderRadius.circular(99),
                     ),
-                    PopupMenuButton<String>(
-                      tooltip: 'Project actions',
-                      icon: Icon(Icons.more_vert,
-                          size: 20, color: colorScheme.outline),
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'history':
-                            onHistory?.call();
-                            break;
-                          case 'reports':
-                            onReports?.call();
-                            break;
-                          case 'edit':
-                            onEdit?.call();
-                            break;
-                          case 'delete':
-                            onDelete?.call();
-                            break;
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'history',
-                          child: ListTile(
-                            leading: Icon(Icons.receipt_long),
-                            title: Text('Invoice List'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'reports',
-                          child: ListTile(
-                            leading: Icon(Icons.bar_chart),
-                            title: Text('Reports'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: ListTile(
-                            leading: Icon(Icons.edit),
-                            title: Text('Edit'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: ListTile(
-                            leading: Icon(Icons.delete_outline,
-                                color: colorScheme.error),
-                            title: Text('Delete',
-                                style: TextStyle(color: colorScheme.error)),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  '£${total.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    fontSize: 23,
-                    fontWeight: FontWeight.w900,
-                    color: colorScheme.primary,
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'TOTAL AMOUNT',
-                  style: TextStyle(
-                    letterSpacing: 1.2,
-                    fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 10),
+                  const Spacer(),
                   Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: colorScheme.outline),
+                    '${project.receiptCount} receipts',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: project.name,
+                            style: TextStyle(
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                          TextSpan(
+                            text: ' : $totalText',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: colorScheme.outline),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
     );
   }
 }
-
