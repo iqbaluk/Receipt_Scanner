@@ -1,33 +1,75 @@
 part of '../main.dart';
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
-  static const _settingsStorage = FlutterSecureStorage();
-  static const _clientNameKey = 'client_name';
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  Future<CompanyProfile?> _companyProfileFuture =
+      DatabaseService.getCompanyProfile();
+  static const List<String> _monthNames = <String>[
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  String _monthLabel(int monthNumber) {
+    final safeMonth = monthNumber.clamp(1, 12);
+    return _monthNames[safeMonth - 1];
+  }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Management')),
+      appBar: AppBar(
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+            onPressed: () => goToHomePage(context),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const _SectionHeader(title: 'Client'),
+          buildPageTitleBanner(
+            context,
+            title: 'Management',
+            icon: Icons.settings_outlined,
+          ),
+          const SizedBox(height: 12),
+          const _SectionHeader(title: 'Company'),
           Card(
-            child: FutureBuilder<String>(
-              future: _clientName(),
+            child: FutureBuilder<CompanyProfile?>(
+              future: _companyProfileFuture,
               builder: (context, snapshot) {
-                final clientName = snapshot.data?.trim() ?? '';
+                final profile = snapshot.data;
+                final subtitle = profile == null
+                    ? 'Not set'
+                    : '${profile.clientName} (${profile.companyCode})\n'
+                        'Nature: ${profile.businessNature}\n'
+                        'FY starts: ${_monthLabel(profile.financialYearStartMonth)}';
                 return ListTile(
                   leading: Icon(Icons.person, color: colorScheme.primary),
-                  title: const Text('Client name'),
-                  subtitle: Text(
-                    clientName.isEmpty ? 'Not set' : clientName,
-                  ),
+                  title: const Text('Company info'),
+                  subtitle: Text(subtitle),
+                  isThreeLine: true,
                   trailing: const Icon(Icons.edit, size: 20),
-                  onTap: () => _editClientName(context),
+                  onTap: () => _editCompanyInfo(context),
                 );
               },
             ),
@@ -40,7 +82,8 @@ class SettingsPage extends StatelessWidget {
                 ListTile(
                   leading: Icon(Icons.backup, color: colorScheme.primary),
                   title: const Text('Backup database and images'),
-                  subtitle: const Text('Creates a restorable ZIP backup'),
+                  subtitle: const Text(
+                      'Saves ZIP on phone first, then you can upload/share'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _runBackup(context),
                 ),
@@ -59,9 +102,18 @@ class SettingsPage extends StatelessWidget {
                   leading: Icon(Icons.restore, color: colorScheme.primary),
                   title: const Text('Restore backup'),
                   subtitle:
-                      const Text('Restore from backups created on this phone'),
+                      const Text('Restore from local backups saved on phone'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _runRestore(context),
+                ),
+                _SettingsDivider(),
+                ListTile(
+                  leading: Icon(Icons.folder_open, color: colorScheme.primary),
+                  title: const Text('Restore from file'),
+                  subtitle: const Text(
+                      'Pick ZIP from Files/Drive/OneDrive/USB (use system Back to cancel)'),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => _runRestoreFromFile(context),
                 ),
                 _SettingsDivider(),
                 ListTile(
@@ -69,9 +121,50 @@ class SettingsPage extends StatelessWidget {
                   title: Text('Reset database',
                       style: TextStyle(color: colorScheme.error)),
                   subtitle: const Text(
-                      'Delete receipts, projects, categories, and photos'),
+                      'Delete receipts and photos (operations are kept)'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _confirmReset(context),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          const _SectionHeader(title: 'Operations'),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading:
+                      Icon(Icons.category_outlined, color: colorScheme.primary),
+                  title: const Text('Expense categories'),
+                  subtitle: const Text('Add, edit, and delete categories'),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CategoryManagerPage(),
+                      ),
+                    );
+                  },
+                ),
+                _SettingsDivider(),
+                ListTile(
+                  leading: Icon(Icons.edit, color: colorScheme.primary),
+                  title: const Text('Edit operation'),
+                  subtitle:
+                      const Text('Select an operation and edit its details'),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => _editOperationFromManagement(context),
+                ),
+                _SettingsDivider(),
+                ListTile(
+                  leading: Icon(Icons.delete_outline, color: colorScheme.error),
+                  title: Text('Delete operation',
+                      style: TextStyle(color: colorScheme.error)),
+                  subtitle: const Text(
+                      'Select an operation and remove it if no receipts exist'),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => _deleteOperationFromManagement(context),
                 ),
               ],
             ),
@@ -115,49 +208,33 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Future<String> _clientName() async {
-    return (await _settingsStorage.read(key: _clientNameKey))?.trim() ?? '';
+  Future<CompanyProfile?> _companyProfile() async {
+    return DatabaseService.getCompanyProfile();
   }
 
-  Future<void> _editClientName(BuildContext context) async {
-    final controller = TextEditingController(text: await _clientName());
-    if (!context.mounted) {
-      controller.dispose();
-      return;
-    }
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Client name'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(
-            labelText: 'Client name',
-            hintText: 'e.g. Iqbal Ahmed',
-          ),
+  Future<String> _clientName() async {
+    final profile = await _companyProfile();
+    final name = profile?.clientName.trim() ?? '';
+    return name.isEmpty ? 'Client' : name;
+  }
+
+  Future<void> _editCompanyInfo(BuildContext context) async {
+    final current = await _companyProfile();
+    if (!context.mounted) return;
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => _CompanyInfoEditPage(
+          initial: current,
+          monthNames: _monthNames,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      controller.dispose();
-    });
-    if (result == null) return;
-    await _settingsStorage.write(key: _clientNameKey, value: result);
+    if (saved != true || !context.mounted) return;
+    _showMessage(context, 'Company info saved.');
     if (!context.mounted) return;
-    _showMessage(context, 'Client name saved.');
-    (context as Element).markNeedsBuild();
+    setState(() {
+      _companyProfileFuture = _companyProfile();
+    });
   }
 
   Future<void> _runBackup(BuildContext context) async {
@@ -165,6 +242,10 @@ class SettingsPage extends StatelessWidget {
     try {
       final backup = await _createFullBackupZip();
       if (!context.mounted) return;
+      _showMessage(
+        context,
+        'Saved on phone: ${backup.path}',
+      );
       await Share.shareXFiles(
         [XFile(backup.path, mimeType: 'application/zip')],
         subject: 'Receipt Scanner Backup',
@@ -184,6 +265,10 @@ class SettingsPage extends StatelessWidget {
     try {
       final backup = await _createPhotoBackupZip();
       if (!context.mounted) return;
+      _showMessage(
+        context,
+        'Saved on phone: ${backup.path}',
+      );
       await Share.shareXFiles(
         [XFile(backup.path, mimeType: 'application/zip')],
         subject: 'Receipt Image Backup',
@@ -206,25 +291,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
 
-    final selected = await showDialog<File>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Restore backup'),
-        children: [
-          for (final backup in backups)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, backup),
-              child: Text(
-                '${p.basename(backup.path)}\n${DateFormat('dd/MM/yyyy HH:mm').format(backup.lastModifiedSync())}',
-              ),
-            ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
+    final selected = await _pickLocalBackupForRestore(context, backups);
     if (selected == null || !context.mounted) return;
 
     final ok = await showDialog<bool>(
@@ -260,24 +327,248 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  Future<void> _confirmReset(BuildContext context) async {
+  Future<File?> _pickLocalBackupForRestore(
+    BuildContext context,
+    List<File> backups,
+  ) async {
+    final localBackups = List<File>.from(backups);
+    return showDialog<File>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Restore backup'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: localBackups.isEmpty
+                ? const Text('No local backups available.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: localBackups.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 12, thickness: 0.8),
+                    itemBuilder: (_, index) {
+                      final backup = localBackups[index];
+                      final modified = backup.existsSync()
+                          ? DateFormat('dd/MM/yyyy HH:mm')
+                              .format(backup.lastModifiedSync())
+                          : 'Missing file';
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          p.basename(backup.path),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(modified),
+                        onTap: () => Navigator.pop(dialogContext, backup),
+                        trailing: IconButton(
+                          tooltip: 'Delete backup',
+                          icon: Icon(
+                            Icons.delete_outline,
+                            color: Theme.of(dialogContext).colorScheme.error,
+                          ),
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: dialogContext,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Delete backup file?'),
+                                content: Text(
+                                  'Delete ${p.basename(backup.path)} from local storage?',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Delete'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm != true) return;
+                            try {
+                              if (await backup.exists()) {
+                                await backup.delete();
+                              }
+                              setDialogState(() {
+                                localBackups.removeAt(index);
+                              });
+                              if (context.mounted) {
+                                _showMessage(context, 'Backup deleted.');
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                _showMessage(
+                                    context, 'Could not delete backup: $e');
+                              }
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runRestoreFromFile(BuildContext context) async {
+    final continueToPicker = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Pick backup ZIP'),
+        content: const Text(
+          'You are opening the Android file picker.\n\n'
+          '- Select a valid .zip backup file to continue.\n'
+          '- To cancel, use the system Back gesture/button.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Open picker'),
+          ),
+        ],
+      ),
+    );
+    if (continueToPicker != true || !context.mounted) return;
+
+    File? selected;
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['zip'],
+        withData: true,
+      );
+      if (!context.mounted) return;
+      if (picked == null || picked.files.isEmpty) {
+        _showMessage(context, 'Restore canceled.');
+        return;
+      }
+
+      final file = picked.files.first;
+      if (file.path != null && file.path!.isNotEmpty) {
+        selected = File(file.path!);
+      } else if (file.bytes != null) {
+        final tempDir = await getTemporaryDirectory();
+        final fallbackName =
+            file.name.trim().isEmpty ? 'restore_backup.zip' : file.name.trim();
+        final tempPath = p.join(
+          tempDir.path,
+          'picked_${DateTime.now().millisecondsSinceEpoch}_$fallbackName',
+        );
+        selected = File(tempPath);
+        await selected.writeAsBytes(file.bytes!, flush: true);
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      _showMessage(context, 'Could not open file picker: $e');
+      return;
+    }
+
+    final backupFile = selected;
+    if (!context.mounted) return;
+    if (backupFile == null) {
+      _showMessage(context, 'No valid ZIP file selected.');
+      return;
+    }
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         icon: Icon(Icons.warning_amber, color: Colors.orange.shade700),
-        title: const Text('Reset database?'),
-        content: const Text(
-          'This will permanently delete all receipts, projects, custom categories, and photos.\n\n'
-          'Default categories will be re-created. This cannot be undone.',
+        title: const Text('Restore this backup file?'),
+        content: Text(
+          'This will replace the current database and receipt images with:\n\n${p.basename(backupFile.path)}',
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+
+    try {
+      await _restoreFullBackup(backupFile);
+      if (!context.mounted) return;
+      _showMessage(context, 'Restored from file. Close and reopen the app.');
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!context.mounted) return;
+      _showMessage(context, 'Restore from file failed: $e');
+    }
+  }
+
+  Future<void> _confirmReset(BuildContext context) async {
+    final precheck = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.warning_amber, color: Colors.orange.shade700),
+        title: const Text('Backup recommended'),
+        content: const Text(
+          'Before reset, please create a backup. Reset will delete receipts and images only; operations will be kept.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, 'backup'),
+            child: const Text('Backup now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'continue'),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (precheck == null || precheck == 'cancel' || !context.mounted) return;
+    if (precheck == 'backup') {
+      await _runBackup(context);
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.warning_amber, color: Colors.red.shade700),
+        title: const Text('Final warning'),
+        content: const Text(
+          'All receipts and images will be removed from this system.\n'
+          'Operations will be kept.\n\n'
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red.shade600),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete everything'),
+            child: const Text('OK'),
           ),
         ],
       ),
@@ -288,11 +579,192 @@ class SettingsPage extends StatelessWidget {
     try {
       await DatabaseService.clearEverything();
       if (!context.mounted) return;
-      _showMessage(context, 'Database reset.');
+      _showMessage(context,
+          'Reset complete. Receipts and images removed; operations kept.');
       Navigator.of(context).pop();
     } catch (e) {
       if (!context.mounted) return;
       _showMessage(context, 'Reset failed: $e');
+    }
+  }
+
+  Future<Project?> _pickOperation(
+    BuildContext context, {
+    required String title,
+  }) async {
+    final projects = await DatabaseService.getProjects();
+    if (!context.mounted) return null;
+    if (projects.isEmpty) {
+      _showMessage(context, 'No operations available.');
+      return null;
+    }
+    return showDialog<Project>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(title),
+        children: [
+          for (final project in projects)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, project),
+              child: Text(project.name),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editOperationFromManagement(BuildContext context) async {
+    final project = await _pickOperation(
+      context,
+      title: 'Select operation to edit',
+    );
+    if (project == null || !context.mounted) return;
+
+    final updated = await _showEditOperationDialog(context, project);
+    if (updated == null || !context.mounted) return;
+
+    try {
+      await DatabaseService.updateProject(updated);
+      if (!context.mounted) return;
+      _showMessage(context, 'Operation updated.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _showMessage(context, 'Could not update operation: $e');
+    }
+  }
+
+  Future<Project?> _showEditOperationDialog(
+      BuildContext context, Project project) async {
+    final name = TextEditingController(text: project.name);
+    final address = TextEditingController(text: project.address ?? '');
+    final budget = TextEditingController(
+      text: project.budget == null ? '' : project.budget!.toStringAsFixed(2),
+    );
+    final notes = TextEditingController(text: project.notes ?? '');
+
+    final result = await showDialog<Project>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit operation'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration:
+                    const InputDecoration(labelText: 'Operation name *'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: address,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Address'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: budget,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Budget',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notes,
+                maxLines: 2,
+                decoration: const InputDecoration(labelText: 'Notes'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmedName = name.text.trim();
+              if (trimmedName.isEmpty) return;
+              Navigator.pop(
+                ctx,
+                Project(
+                  id: project.id,
+                  name: trimmedName,
+                  address:
+                      address.text.trim().isEmpty ? null : address.text.trim(),
+                  budget: double.tryParse(budget.text),
+                  notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
+                  createdAt: project.createdAt,
+                  updatedAt: project.updatedAt,
+                ),
+              );
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      name.dispose();
+      address.dispose();
+      budget.dispose();
+      notes.dispose();
+    });
+
+    return result;
+  }
+
+  Future<void> _deleteOperationFromManagement(BuildContext context) async {
+    final project = await _pickOperation(
+      context,
+      title: 'Select operation to delete',
+    );
+    if (project == null || !context.mounted) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete operation?'),
+        content: Text(
+          'Delete "${project.name}"?\n\nOperations with saved receipts cannot be deleted until their receipts are removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+
+    try {
+      await DatabaseService.deleteProject(project);
+      if (!context.mounted) return;
+      _showMessage(context, 'Operation deleted.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _showMessage(
+        context,
+        e.toString().replaceFirst('Bad state: ', ''),
+      );
     }
   }
 
@@ -420,9 +892,23 @@ class SettingsPage extends StatelessWidget {
     Database? probeDb;
     try {
       probeDb = await openDatabase(dbPath, readOnly: true);
-      await probeDb.rawQuery('SELECT COUNT(*) FROM receipts');
-      await probeDb.rawQuery('SELECT COUNT(*) FROM projects');
-      await probeDb.rawQuery('SELECT COUNT(*) FROM categories');
+      const requiredTables = <String>[
+        'tbl_receipts',
+        'tbl_projects',
+        'tbl_categories',
+      ];
+      for (final table in requiredTables) {
+        final tableRows = await probeDb.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          [table],
+        );
+        if (tableRows.isEmpty) {
+          throw StateError('Missing required table: $table');
+        }
+      }
+      await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_receipts');
+      await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_projects');
+      await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_categories');
     } catch (_) {
       throw StateError('Backup database is corrupted or incompatible.');
     } finally {
@@ -484,6 +970,195 @@ class SettingsPage extends StatelessWidget {
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+}
+
+class _CompanyInfoEditPage extends StatefulWidget {
+  final CompanyProfile? initial;
+  final List<String> monthNames;
+
+  const _CompanyInfoEditPage({
+    required this.initial,
+    required this.monthNames,
+  });
+
+  @override
+  State<_CompanyInfoEditPage> createState() => _CompanyInfoEditPageState();
+}
+
+class _CompanyInfoEditPageState extends State<_CompanyInfoEditPage> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _clientController;
+  late final TextEditingController _companyCodeController;
+  late final TextEditingController _natureController;
+  late final TextEditingController _descriptionController;
+  late int _fyStartMonth;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _clientController =
+        TextEditingController(text: widget.initial?.clientName ?? '');
+    _companyCodeController =
+        TextEditingController(text: widget.initial?.companyCode ?? '');
+    _natureController =
+        TextEditingController(text: widget.initial?.businessNature ?? '');
+    _descriptionController =
+        TextEditingController(text: widget.initial?.businessDescription ?? '');
+    _fyStartMonth =
+        (widget.initial?.financialYearStartMonth ?? 4).clamp(1, 12).toInt();
+  }
+
+  @override
+  void dispose() {
+    _clientController.dispose();
+    _companyCodeController.dispose();
+    _natureController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _saving = true);
+    try {
+      await DatabaseService.saveCompanyProfile(
+        clientName: _clientController.text,
+        companyCode: _companyCodeController.text,
+        businessNature: _natureController.text,
+        businessDescription: _descriptionController.text,
+        financialYearStartMonth: _fyStartMonth,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed: $e')),
+      );
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Company info'),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Save'),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _clientController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Client name *',
+                        hintText: 'e.g. Iqbal Ahmed',
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                              ? 'Client name is required'
+                              : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _companyCodeController,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                        labelText: 'Company code *',
+                        hintText: 'e.g. YC001',
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                              ? 'Company code is required'
+                              : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _natureController,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: const InputDecoration(
+                        labelText: 'Nature of business *',
+                        hintText:
+                            'e.g. Restaurant, Garage, Builder, Trading services',
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                              ? 'Nature of business is required'
+                              : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _descriptionController,
+                      textCapitalization: TextCapitalization.sentences,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Business description / examples *',
+                        hintText:
+                            'Describe what counts as purchases, sundries, travel, etc.',
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                              ? 'Business description is required'
+                              : null,
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: _fyStartMonth,
+                      decoration: const InputDecoration(
+                        labelText: 'Financial year start month *',
+                      ),
+                      items: List.generate(
+                        12,
+                        (index) => DropdownMenuItem<int>(
+                          value: index + 1,
+                          child: Text(widget.monthNames[index]),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _fyStartMonth = value);
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Save company info'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

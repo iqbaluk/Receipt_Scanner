@@ -1,0 +1,44 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}{\f1 Consolas;}}
+\fs24
+\b Receipt Scanner iOS Conversion Steps\b0\par
+\par
+Project ZIP: ReceiptScanner_iOS_Handover.zip\par
+Target output: Apple iOS app (.ipa)\par
+\par
+\b 1) Prepare Mac Environment\b0\par
+- Install latest stable Flutter\par
+- Install Xcode and open once to finish setup\par
+- Install CocoaPods (pod)\par
+- Sign in with Apple Developer account in Xcode\par
+\par
+\b 2) Open Project\b0\par
+Unzip ReceiptScanner_iOS_Handover.zip and open Terminal in the project root folder.\par
+\par
+\b 3) Build Commands\b0\par
+\f1 flutter clean\f0\par
+\f1 flutter pub get\f0\par
+\f1 cd ios\f0\par
+\f1 pod install\f0\par
+\f1 cd ..\f0\par
+\f1 flutter build ipa --release\f0\par
+\par
+\b 4) If Signing Error Appears\b0\par
+- Open ios/Runner.xcworkspace in Xcode\par
+- Go to Runner > Signing & Capabilities\par
+- Set Team, Bundle Identifier, and Signing Certificate\par
+- Then build archive from Xcode: Product > Archive\par
+\par
+\b 5) Output Location\b0\par
+build/ios/ipa/\par
+\par
+\b 6) Client Delivery Options\b0\par
+- Upload via App Store Connect / TestFlight\par
+- Or export IPA from Xcode Organizer for internal distribution\par
+\par
+\b 7) Quick Verification Before Upload\b0\par
+- Open app and check scan workflow\par
+- Save and edit invoice\par
+- Invoice list and reports\par
+- Export/share actions\par
+}

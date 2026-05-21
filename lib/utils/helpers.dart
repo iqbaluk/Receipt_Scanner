@@ -1,4 +1,4 @@
-﻿part of '../main.dart';
+part of '../main.dart';
 
 String formatAppDate(DateTime value) => DateFormat('dd/MM/yyyy').format(value);
 
@@ -9,20 +9,18 @@ String formatAppMoney(
 }) {
   final pattern = decimals == 0 ? '#,##0' : '#,##0.${'0' * decimals}';
   final formatted = NumberFormat(pattern).format(value);
-  return withSymbol ? '£$formatted' : formatted;
+  return formatted;
 }
 
 bool _isExactInvoiceDuplicate(
   Receipt receipt, {
   required String invoiceNumber,
   required String supplier,
-  required DateTime date,
 }) {
   final invoice = normalizeInvoiceNumber(invoiceNumber);
   if (invoice.isEmpty) return false;
   return normalizeInvoiceNumber(receipt.invoiceNumber) == invoice &&
-      normalizeSupplier(receipt.supplier) == normalizeSupplier(supplier) &&
-      Receipt.formatDate(receipt.date) == Receipt.formatDate(date);
+      normalizeSupplier(receipt.supplier) == normalizeSupplier(supplier);
 }
 
 bool _isAmountsBalanced({
@@ -36,6 +34,39 @@ bool _isAmountsBalanced({
 bool _isDuplicateSignatureError(Object error) {
   final text = error.toString().toUpperCase();
   return text.contains('DUPLICATE_INVOICE_SIGNATURE');
+}
+
+bool _isSupplierDateGrossDuplicateError(Object error) {
+  final text = error.toString().toUpperCase();
+  return text.contains('DUPLICATE_SUPPLIER_DATE_GROSS');
+}
+
+const String _paymentMismatchPrefix = '*** PAYMENT MISMATCH:';
+
+String? _buildNotesWithPaymentMismatch({
+  required String? existingNotes,
+  required double gross,
+  required double paid,
+}) {
+  final lines = (existingNotes ?? '')
+      .split('\n')
+      .map((line) => line.trimRight())
+      .where((line) => line.trim().isNotEmpty)
+      .where((line) => !line.trimLeft().startsWith(_paymentMismatchPrefix))
+      .toList();
+
+  final diff = paid - gross;
+  if (diff.abs() >= 0.01) {
+    lines.add(
+      '$_paymentMismatchPrefix '
+      'Invoice ${gross.toStringAsFixed(2)}, '
+      'Paid ${paid.toStringAsFixed(2)}, '
+      'Diff ${diff.toStringAsFixed(2)}',
+    );
+  }
+
+  if (lines.isEmpty) return null;
+  return lines.join('\n');
 }
 
 Future<void> _showHardDuplicateBlockedDialog(
@@ -64,8 +95,63 @@ Future<void> _showHardDuplicateBlockedDialog(
         children: [
           Text(
             existingRef == null
-                ? 'A receipt with the same invoice no, supplier, and date already exists.'
-                : 'A receipt with the same invoice no, supplier, and date already exists as $existingRef.',
+                ? 'A receipt with the same invoice no and supplier already exists.'
+                : 'A receipt with the same invoice no and supplier already exists as $existingRef.',
+          ),
+          if (details != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                border: Border.all(color: Colors.orange.shade200),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(details),
+            ),
+          ],
+          const SizedBox(height: 10),
+          const Text('This duplicate cannot be saved.'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showSupplierDateGrossDuplicateBlockedDialog(
+  BuildContext context, {
+  Receipt? existing,
+}) async {
+  if (!context.mounted) return;
+  final existingRef = existing == null
+      ? null
+      : '#${(existing.scanNo ?? existing.id ?? 0).toString().padLeft(5, '0')}';
+  final details = existing == null
+      ? null
+      : '${existing.supplier}\n'
+          'Date: ${formatAppDate(existing.date)}\n'
+          'Gross: ${formatAppMoney(existing.gross)}';
+
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      icon: Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 32),
+      title: const Text('Duplicate receipt found'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            existingRef == null
+                ? 'A receipt with the same supplier, date, and gross already exists.'
+                : 'A receipt with the same supplier, date, and gross already exists as $existingRef.',
           ),
           if (details != null) ...[
             const SizedBox(height: 12),
@@ -142,6 +228,7 @@ Future<ExportRange?> _pickExportRange(
   );
 
   if (choice == null) return null;
+  if (!context.mounted) return null;
 
   switch (choice) {
     case 'today':
@@ -169,5 +256,3 @@ Future<ExportRange?> _pickExportRange(
       return null;
   }
 }
-
-

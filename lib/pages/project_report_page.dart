@@ -32,7 +32,7 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
   Future<void> _pickRange() async {
     final next = await _pickExportRange(
       context,
-      title: 'Report range',
+      title: 'Operation report range',
     );
     if (next == null || !mounted) return;
     setState(() {
@@ -147,6 +147,33 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
     );
   }
 
+  Future<void> _printReport() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Preparing report for print...')),
+    );
+    try {
+      final report = await _reportFuture;
+      final pdfBytes = await ExportService.buildProjectSummaryPdfBytes(
+        project: widget.project,
+        report: report,
+        range: _range,
+        dateBasis: _dateBasis,
+      );
+      if (!mounted) return;
+      await openInAppPrintPreview(
+        context,
+        title: 'Print report',
+        fileName: 'operation_report_${widget.project.name}.pdf',
+        pdfBytes: pdfBytes,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Print failed: $e')),
+      );
+    }
+  }
+
   String _rangeLabel() {
     switch (_range.label) {
       case 'all_time':
@@ -168,30 +195,29 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Reports'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.table_chart),
-            tooltip: 'Combined report',
-            onPressed: _openCombinedReport,
-          ),
-          IconButton(
-            icon: const Icon(Icons.list_alt),
-            tooltip: 'Invoice list',
-            onPressed: _openInvoiceList,
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+            onPressed: () => goToHomePage(context),
           ),
           IconButton(
             icon: const Icon(Icons.date_range),
-            tooltip: 'Report range',
+            tooltip: 'Period',
             onPressed: _pickRange,
           ),
           IconButton(
-            icon: const Icon(Icons.cloud_upload),
-            tooltip: 'Share report',
+            icon: const Icon(Icons.cloud_upload_outlined),
+            tooltip: 'Upload/share',
             onPressed: _showReportExportMenu,
           ),
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Print report',
+            onPressed: _printReport,
+          ),
           PopupMenuButton<DateBasis>(
-            tooltip: 'Date basis',
+            tooltip: 'Date filter',
             icon: const Icon(Icons.filter_alt),
             onSelected: _setDateBasis,
             itemBuilder: (ctx) => const [
@@ -202,6 +228,30 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
               PopupMenuItem(
                 value: DateBasis.scanDate,
                 child: Text('Scan date'),
+              ),
+            ],
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              switch (value) {
+                case 'invoice_list':
+                  _openInvoiceList();
+                  break;
+                case 'combined_report':
+                  _openCombinedReport();
+                  break;
+              }
+            },
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 'invoice_list',
+                child: Text('Invoice list'),
+              ),
+              PopupMenuItem(
+                value: 'combined_report',
+                child: Text('Combined report'),
               ),
             ],
           ),
@@ -221,6 +271,12 @@ class _ProjectReportPageState extends State<ProjectReportPage> {
             return ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                buildPageTitleBanner(
+                  context,
+                  title: 'Operation report and exports',
+                  icon: Icons.bar_chart,
+                ),
+                const SizedBox(height: 14),
                 _buildReportHeader(colorScheme),
                 if (report.categories.isNotEmpty) ...[
                   const SizedBox(height: 20),
@@ -424,7 +480,7 @@ class SummaryReportTable extends StatelessWidget {
           TableRow(
             decoration: BoxDecoration(color: colorScheme.primaryContainer),
             children: [
-              _ReportCell('Categories', style: headerStyle),
+              _ReportCell('Expense Category', style: headerStyle),
               _ReportCell('Inv count', style: headerStyle, alignRight: true),
               _ReportCell('Gross', style: headerStyle, alignRight: true),
             ],
@@ -613,4 +669,3 @@ class _BudgetProgress extends StatelessWidget {
     );
   }
 }
-

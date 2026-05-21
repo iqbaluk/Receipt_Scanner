@@ -18,6 +18,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
   late TextEditingController _supplier;
   late TextEditingController _vat;
   late TextEditingController _gross;
+  late TextEditingController _paid;
   late TextEditingController _net;
   late TextEditingController _notes;
   List<Project> _projects = [];
@@ -26,6 +27,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
   bool _editing = false;
   bool _saving = false;
   bool _didUpdate = false;
+  bool _isAutoAmountUpdate = false;
 
   @override
   void initState() {
@@ -38,8 +40,12 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     _supplier = TextEditingController(text: _current.supplier);
     _vat = TextEditingController(text: _current.vat.toStringAsFixed(2));
     _gross = TextEditingController(text: _current.gross.toStringAsFixed(2));
+    _paid = TextEditingController(text: _current.paidAmount.toStringAsFixed(2));
     _net = TextEditingController(text: _current.net.toStringAsFixed(2));
     _notes = TextEditingController(text: _current.notes ?? '');
+    _gross.addListener(_syncAmountFields);
+    _vat.addListener(_syncAmountFields);
+    _paid.addListener(_syncAmountFields);
     _loadProjects();
     _loadCategories();
   }
@@ -50,9 +56,32 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     _supplier.dispose();
     _vat.dispose();
     _gross.dispose();
+    _paid.dispose();
     _net.dispose();
     _notes.dispose();
     super.dispose();
+  }
+
+  void _syncAmountFields() {
+    if (_isAutoAmountUpdate) return;
+    final gross = double.tryParse(_gross.text) ?? 0;
+    final vat = double.tryParse(_vat.text) ?? 0;
+    var paid = double.tryParse(_paid.text);
+
+    _isAutoAmountUpdate = true;
+    try {
+      if (paid == null && gross > 0) {
+        paid = gross;
+        _paid.text = gross.toStringAsFixed(2);
+      }
+      if (gross > 0) {
+        _net.text = (gross - vat).toStringAsFixed(2);
+      } else if (_net.text.trim().isEmpty) {
+        _net.clear();
+      }
+    } finally {
+      _isAutoAmountUpdate = false;
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -90,7 +119,15 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     final newInvoiceNumber = _invoiceNumber.text.trim();
     final newVat = double.tryParse(_vat.text) ?? 0;
     final newGross = double.tryParse(_gross.text) ?? 0;
+    final parsedPaid = double.tryParse(_paid.text);
+    final newPaid =
+        (parsedPaid != null && parsedPaid > 0) ? parsedPaid : newGross;
     final newNet = double.tryParse(_net.text) ?? 0;
+    final notesWithFlag = _buildNotesWithPaymentMismatch(
+      existingNotes: _notes.text.trim(),
+      gross: newGross,
+      paid: newPaid,
+    );
     final newProjectId = _projectId ?? _current.projectId;
 
     if (!_isAmountsBalanced(net: newNet, vat: newVat, gross: newGross)) {
@@ -98,8 +135,8 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
         SnackBar(
           content: Text(
             'Unbalanced entry: Net + VAT must equal Gross. '
-            'Current total is £${(newNet + newVat).toStringAsFixed(2)} '
-            'vs Gross £${newGross.toStringAsFixed(2)}.',
+            'Current total is ${(newNet + newVat).toStringAsFixed(2)} '
+            'vs Gross ${newGross.toStringAsFixed(2)}.',
           ),
         ),
       );
@@ -110,7 +147,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
       final existingInvoice = await DatabaseService.findByInvoiceSignature(
         invoiceNumber: newInvoiceNumber,
         supplier: newSupplier,
-        date: _date,
         excludeId: _current.id,
       );
       if (existingInvoice != null) {
@@ -127,7 +163,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     setState(() => _saving = true);
     try {
       final dupes = await DatabaseService.findPossibleDuplicates(
-        projectId: newProjectId,
         invoiceNumber: newInvoiceNumber,
         supplier: newSupplier,
         date: _date,
@@ -142,7 +177,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
             receipt,
             invoiceNumber: newInvoiceNumber,
             supplier: newSupplier,
-            date: _date,
           ),
         );
         final ok = await showDialog<bool>(
@@ -157,7 +191,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
             ),
             content: Text(
               hardDuplicate
-                  ? 'A receipt with the same invoice no, supplier, and date already exists. These changes were not saved.'
+                  ? 'A receipt with the same invoice no and supplier already exists. These changes were not saved.'
                   : 'Saving these changes would match an existing receipt with the same supplier, date, and gross amount (#${dupes.first.scanNo?.toString().padLeft(5, '0') ?? dupes.first.id}). These changes were not saved.',
             ),
             actions: [
@@ -184,8 +218,9 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
         supplier: newSupplier,
         vat: newVat,
         gross: newGross,
+        paidAmount: newPaid,
         net: newNet,
-        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+        notes: notesWithFlag,
       );
       await DatabaseService.updateReceipt(updated);
       if (!mounted) return;
@@ -213,7 +248,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
             ? await DatabaseService.findByInvoiceSignature(
                 invoiceNumber: newInvoiceNumber,
                 supplier: newSupplier,
-                date: _date,
                 excludeId: _current.id,
               )
             : null;
@@ -221,6 +255,19 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
         await _showHardDuplicateBlockedDialog(
           context,
           existing: existingInvoice,
+        );
+      } else if (_isSupplierDateGrossDuplicateError(e)) {
+        final dupes = await DatabaseService.findPossibleDuplicates(
+          invoiceNumber: newInvoiceNumber,
+          supplier: newSupplier,
+          date: _date,
+          gross: newGross,
+          excludeId: _current.id,
+        );
+        if (!mounted) return;
+        await _showSupplierDateGrossDuplicateBlockedDialog(
+          context,
+          existing: dupes.isEmpty ? null : dupes.first,
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -237,7 +284,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     for (final project in _projects) {
       if (project.id == id) return project.name;
     }
-    return 'Project $id';
+    return 'Operation $id';
   }
 
   Future<void> _shareInvoice() async {
@@ -275,7 +322,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     final path = p.join(dir.path, filename);
     final csv = StringBuffer();
     csv.writeln(
-      'ScanNo,Project,InvoiceDate,ScanDate,InvoiceNo,Category,Supplier,Net,VAT,Gross,Notes,PhotoFile',
+      'ScanNo,Operation,InvoiceDate,ScanDate,InvoiceNo,Category,Supplier,Net,VAT,Gross,Paid,Savings,Notes,PhotoFile',
     );
     final photoFile = receipt.photoPath == null
         ? ''
@@ -291,6 +338,8 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
       receipt.net.toStringAsFixed(2),
       receipt.vat.toStringAsFixed(2),
       receipt.gross.toStringAsFixed(2),
+      receipt.paidAmount.toStringAsFixed(2),
+      receipt.savingsAmount.toStringAsFixed(2),
       _csvEscape(receipt.notes ?? ''),
       _csvEscape(photoFile),
     ];
@@ -309,7 +358,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Delete this receipt?'),
         content: Text(
-          '${_current.supplier} ·${_current.gross.toStringAsFixed(2)}\\n\\nThis cannot be undone.',
+          '${_current.supplier} Â·${_current.gross.toStringAsFixed(2)}\\n\\nThis cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -347,6 +396,42 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     if (picked != null) setState(() => _date = picked);
   }
 
+  Future<void> _openPhotoViewer(String photoPath) async {
+    final file = File(photoPath);
+    if (!await file.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo file missing')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: const Text('Image viewer'),
+          ),
+          body: SafeArea(
+            child: Center(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 5.0,
+                child: Image.file(
+                  file,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scanLabel = _current.scanNo != null
@@ -360,9 +445,12 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text('Receipt $scanLabel'),
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
           actions: [
+            IconButton(
+              icon: const Icon(Icons.home_outlined),
+              tooltip: 'Home',
+              onPressed: () => goToHomePage(context),
+            ),
             IconButton(
               icon: const Icon(Icons.cloud_upload),
               tooltip: 'Upload/share invoice',
@@ -391,24 +479,42 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              buildPageTitleBanner(
+                context,
+                title: 'Receipt details $scanLabel',
+                icon: Icons.receipt_long,
+              ),
+              const SizedBox(height: 12),
               if (_current.photoPath != null) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.file(
-                    File(_current.photoPath!),
-                    height: 280,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 80,
-                      color: Colors.grey.shade100,
-                      child: const Center(
-                        child: Text('Photo file missing',
-                            style: TextStyle(color: Colors.grey)),
+                InkWell(
+                  onTap: () => _openPhotoViewer(_current.photoPath!),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(_current.photoPath!),
+                      height: 280,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Container(
+                        height: 80,
+                        color: Colors.grey.shade100,
+                        child: const Center(
+                          child: Text('Photo file missing',
+                              style: TextStyle(color: Colors.grey)),
+                        ),
                       ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 6),
+                Text(
+                  'Tap image to open zoom view',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
                 Text(
                   'File: ${_current.photoPath != null ? _current.photoPath!.split('/').last.split('\\').last : ""}',
                   style: TextStyle(
@@ -468,7 +574,8 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                     final categoryField = DropdownButtonFormField<String>(
                       initialValue: _category,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Category'),
+                      decoration:
+                          const InputDecoration(labelText: 'Expense category'),
                       style: fieldStyle,
                       selectedItemBuilder: (context) => _categories
                           .map(
@@ -515,7 +622,7 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                           ? _projectId
                           : null,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Project'),
+                      decoration: const InputDecoration(labelText: 'Operation'),
                       style: fieldStyle,
                       selectedItemBuilder: (context) => _projects
                           .where((p) => p.id != null)
@@ -557,7 +664,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                           const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
                         labelText: 'Net',
-                        prefixText: '£ ',
                       ),
                     );
 
@@ -569,7 +675,6 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                           const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
                         labelText: 'VAT',
-                        prefixText: '£ ',
                       ),
                     );
 
@@ -581,7 +686,18 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                           const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
                         labelText: 'Gross',
-                        prefixText: '£ ',
+                      ),
+                    );
+
+                    final paidField = TextField(
+                      controller: _paid,
+                      enabled: _editing,
+                      style: fieldStyle,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Paid',
+                        hintText: 'Defaults to Gross',
                       ),
                     );
 
@@ -615,6 +731,8 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                               Expanded(child: grossField),
                             ],
                           ),
+                          SizedBox(height: gap),
+                          paidField,
                           SizedBox(height: gap),
                           notesField,
                         ],
@@ -653,6 +771,8 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
                             Expanded(child: grossField),
                           ],
                         ),
+                        SizedBox(height: gap),
+                        paidField,
                         SizedBox(height: gap),
                         notesField,
                       ],
@@ -695,4 +815,3 @@ class _ReceiptDetailPageState extends State<ReceiptDetailPage> {
     );
   }
 }
-

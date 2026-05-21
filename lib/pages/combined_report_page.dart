@@ -1,4 +1,4 @@
-﻿part of '../main.dart';
+part of '../main.dart';
 
 class CombinedReportPage extends StatefulWidget {
   final ExportRange initialRange;
@@ -36,7 +36,8 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
   }
 
   Future<void> _pickRange() async {
-    final next = await _pickExportRange(context, title: 'Combined report range');
+    final next = await _pickExportRange(context,
+        title: 'Combined operations report range');
     if (next == null || !mounted) return;
     setState(() {
       _range = next;
@@ -51,41 +52,34 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
     });
   }
 
-  String _rangeLabel() {
-    switch (_range.label) {
-      case 'all_time':
-        return 'All receipts';
-      case 'this_month':
-        return DateFormat('MMMM yyyy').format(_range.from);
-      case 'last_month':
-        return DateFormat('MMMM yyyy').format(_range.from);
-      default:
-        if (_range.label.startsWith('this_year')) {
-          return 'Year ${_range.from.year}';
-        }
-        return '${DateFormat('dd/MM/yy').format(_range.from)} - ${DateFormat('dd/MM/yy').format(_range.to)}';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Combined Report'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+            onPressed: () => goToHomePage(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.date_range),
-            tooltip: 'Date range',
+            tooltip: 'Period',
             onPressed: _pickRange,
           ),
           IconButton(
-            icon: const Icon(Icons.cloud_upload),
-            tooltip: 'Share report',
+            icon: const Icon(Icons.cloud_upload_outlined),
+            tooltip: 'Upload/share',
             onPressed: _showCombinedExportMenu,
           ),
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Print report',
+            onPressed: _printCombinedReport,
+          ),
           PopupMenuButton<DateBasis>(
-            tooltip: 'Date basis',
+            tooltip: 'Date filter',
             icon: const Icon(Icons.filter_alt),
             onSelected: _setDateBasis,
             itemBuilder: (ctx) => const [
@@ -114,17 +108,10 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${_rangeLabel()} · ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
-                  style: TextStyle(color: colorScheme.onPrimaryContainer),
-                ),
+              buildPageTitleBanner(
+                context,
+                title: 'Combined report and exports',
+                icon: Icons.table_chart,
               ),
               const SizedBox(height: 12),
               if (report.projects.isNotEmpty)
@@ -221,14 +208,14 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                           ),
                           children: [
                             _ReportCell(
-                              'Categories',
+                              'Expense Categories',
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: colorScheme.onPrimaryContainer,
                               ),
                             ),
                             for (final p in report.projects)
-                            _ReportCell(
+                              _ReportCell(
                                 p.name,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w700,
@@ -236,9 +223,9 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                                 ),
                                 alignRight: true,
                               ),
-                            _ReportCell(
+                            const _ReportCell(
                               'Total',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.w800,
                                 color: Colors.red,
                               ),
@@ -249,7 +236,7 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                         for (final category in report.categories)
                           TableRow(
                             children: [
-                            _ReportCell(
+                              _ReportCell(
                                 category,
                                 style: TextStyle(
                                   color: colorScheme.onSurface,
@@ -257,24 +244,25 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                                 ),
                               ),
                               for (final p in report.projects)
-                            _ReportCell(
-                                  _moneyOrDash(report.grossByCategoryProject[
-                                          category]?[p.id] ??
-                                      0),
+                                _ReportCell(
+                                  _moneyOrDash(
+                                      report.grossByCategoryProject[category]
+                                              ?[p.id] ??
+                                          0),
                                   style: TextStyle(
                                     color: colorScheme.onSurface,
                                     fontSize: 14,
                                   ),
                                   alignRight: true,
                                 ),
-                            _ReportCell(
+                              _ReportCell(
                                 _money(
                                   report.projects.fold<double>(
                                     0,
                                     (sum, p) =>
                                         sum +
-                                        (report.grossByCategoryProject[
-                                                    category]?[p.id] ??
+                                        (report.grossByCategoryProject[category]
+                                                ?[p.id] ??
                                             0),
                                   ),
                                 ),
@@ -291,7 +279,7 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                             color: colorScheme.surfaceContainerLow,
                           ),
                           children: [
-                            _ReportCell(
+                            const _ReportCell(
                               'Total',
                               style: TextStyle(
                                 color: Colors.red,
@@ -299,7 +287,7 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                               ),
                             ),
                             for (final p in report.projects)
-                            _ReportCell(
+                              _ReportCell(
                                 _money(report.projectTotals[p.id] ?? 0),
                                 style: const TextStyle(
                                   color: Colors.red,
@@ -323,7 +311,7 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
                 ),
               const SizedBox(height: 8),
               Text(
-                'Projects: ${report.projects.length} · Categories: ${report.categories.length} · Cells: ${report.grossByCategoryProject.length}',
+                'Operations: ${report.projects.length} Â· Categories: ${report.categories.length} Â· Cells: ${report.grossByCategoryProject.length}',
                 style: TextStyle(
                   fontSize: 12,
                   color: colorScheme.onSurfaceVariant,
@@ -419,13 +407,37 @@ class _CombinedReportPageState extends State<CombinedReportPage> {
     );
   }
 
-  String _money(double value) => formatAppMoney(value, decimals: 0, withSymbol: false);
+  Future<void> _printCombinedReport() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Preparing combined report for print...')),
+    );
+    try {
+      final report = await _future;
+      final pdfBytes = await ExportService.buildCombinedSummaryPdfBytes(
+        report: report,
+        range: _range,
+        dateBasis: _dateBasis,
+      );
+      if (!mounted) return;
+      await openInAppPrintPreview(
+        context,
+        title: 'Print combined report',
+        fileName: 'combined_report_${_range.label}.pdf',
+        pdfBytes: pdfBytes,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Print failed: $e')),
+      );
+    }
+  }
+
+  String _money(double value) =>
+      formatAppMoney(value, decimals: 0, withSymbol: false);
 
   String _moneyOrDash(double value) {
     if (value.abs() < 0.005) return '-';
     return _money(value);
   }
 }
-
-
-

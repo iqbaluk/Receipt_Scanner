@@ -16,6 +16,7 @@
 //     supplier        TEXT
 //     vat             REAL
 //     gross           REAL
+//     paid_amount     REAL
 //     net             REAL
 //     notes           TEXT
 //     photo_path      TEXT      (full path to the smart-named jpg)
@@ -120,6 +121,58 @@ class AppCategory {
   }
 }
 
+class CompanyProfile {
+  final int id;
+  final String clientName;
+  final String companyCode;
+  final String businessNature;
+  final String businessDescription;
+  final int financialYearStartMonth;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  CompanyProfile({
+    this.id = 1,
+    required this.clientName,
+    required this.companyCode,
+    required this.businessNature,
+    required this.businessDescription,
+    required this.financialYearStartMonth,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'client_name': clientName,
+      'company_code': companyCode,
+      'business_nature': businessNature,
+      'business_description': businessDescription,
+      'financial_year_start_month': financialYearStartMonth,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory CompanyProfile.fromMap(Map<String, dynamic> map) {
+    return CompanyProfile(
+      id: (map['id'] as num?)?.toInt() ?? 1,
+      clientName: map['client_name'] as String? ?? '',
+      companyCode: map['company_code'] as String? ?? '',
+      businessNature: map['business_nature'] as String? ?? '',
+      businessDescription: map['business_description'] as String? ?? '',
+      financialYearStartMonth:
+          (map['financial_year_start_month'] as num?)?.toInt() ?? 4,
+      createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??
+          DateTime.now(),
+      updatedAt: DateTime.tryParse(map['updated_at'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
 class CategorySummary {
   final String category;
   final int receiptCount;
@@ -180,6 +233,30 @@ class CombinedProjectReport {
   });
 }
 
+class MonthlyFiscalActivityReport {
+  final DateTime from;
+  final DateTime to;
+  final List<DateTime> months;
+  final List<String> categories;
+  final Map<String, List<double>> categoryMonthGross;
+  final List<double> monthTotals;
+  final Map<String, double> categoryTotals;
+  final double grandTotal;
+  final int invoiceCount;
+
+  MonthlyFiscalActivityReport({
+    required this.from,
+    required this.to,
+    required this.months,
+    required this.categories,
+    required this.categoryMonthGross,
+    required this.monthTotals,
+    required this.categoryTotals,
+    required this.grandTotal,
+    required this.invoiceCount,
+  });
+}
+
 class Receipt {
   final int? id;
   final int? projectId;
@@ -190,6 +267,7 @@ class Receipt {
   final String supplier;
   final double vat;
   final double gross;
+  final double paidAmount;
   final double net;
   final String? notes;
   final String? photoPath;
@@ -206,6 +284,7 @@ class Receipt {
     required this.supplier,
     required this.vat,
     required this.gross,
+    required this.paidAmount,
     required this.net,
     this.notes,
     this.photoPath,
@@ -225,6 +304,7 @@ class Receipt {
       'supplier': supplier,
       'vat': vat,
       'gross': gross,
+      'paid_amount': paidAmount,
       'net': net,
       'notes': notes,
       'photo_path': photoPath,
@@ -244,6 +324,8 @@ class Receipt {
       supplier: map['supplier'] as String,
       vat: (map['vat'] as num).toDouble(),
       gross: (map['gross'] as num).toDouble(),
+      paidAmount: (map['paid_amount'] as num?)?.toDouble() ??
+          (map['gross'] as num).toDouble(),
       net: (map['net'] as num).toDouble(),
       notes: map['notes'] as String?,
       photoPath: map['photo_path'] as String?,
@@ -262,6 +344,7 @@ class Receipt {
     String? supplier,
     double? vat,
     double? gross,
+    double? paidAmount,
     double? net,
     String? notes,
     String? photoPath,
@@ -278,6 +361,7 @@ class Receipt {
       supplier: supplier ?? this.supplier,
       vat: vat ?? this.vat,
       gross: gross ?? this.gross,
+      paidAmount: paidAmount ?? this.paidAmount,
       net: net ?? this.net,
       notes: notes ?? this.notes,
       photoPath: photoPath ?? this.photoPath,
@@ -291,6 +375,8 @@ class Receipt {
         '${d.month.toString().padLeft(2, '0')}-'
         '${d.day.toString().padLeft(2, '0')}';
   }
+
+  double get savingsAmount => gross - paidAmount;
 
   /// Build the smart filename for this receipt.
   /// Pattern: NNNNN_YYYY-MM-DD_Category_Supplier_AMOUNT.jpg
@@ -328,18 +414,122 @@ class DatabaseService {
   static const String _table = 'tbl_receipts';
   static const String _projectsTable = 'tbl_projects';
   static const String _categoriesTable = 'tbl_categories';
-  static const int _dbVersion = 8;
+  static const String _companyTable = 'tbl_company_profile';
+  static const int _dbVersion = 16;
   static const String _combinedReportView = 'vw_receipt_project_matrix';
 
   static const List<String> defaultCategories = [
-    'Material',
-    'Subcontractor',
-    'Utility Bills',
-    'Travel',
+    'Purchases',
+    'Labour / Subcontractor',
+    'Rent and Rates',
+    'Heat, Light and Power',
+    'Motor Expenses',
+    'Travelling and Entertainment',
+    'Printing and Stationery',
+    'Telephone and Computer Charges',
+    'Professional Fees',
+    'Equipment Hire and Rental',
+    'Maintenance',
+    'Bank Charges and Interest',
+    'Depreciation',
+    'Bad Debts',
     'Insurance',
-    'Sundries',
-    'Other',
+    'Advertisement and Marketing',
+    'General Expenses',
+    'Donations and Charity',
   ];
+
+  static const List<String> categoryPnlOrder = defaultCategories;
+
+  static String _normalizeCategoryKey(String category) {
+    final key = category.trim().toLowerCase();
+    switch (key) {
+      case 'labour':
+      case 'labor':
+      case 'gross wages':
+      case 'labour / subcontractor':
+      case 'labour/subcontractor':
+      case 'staff and contractors':
+      case 'staff & contractors':
+      case 'subcontractor':
+      case 'salary':
+        return 'labour / subcontractor';
+      case 'rent & rates':
+      case 'rent and rates':
+      case 'rent & rate':
+      case 'rates and rent':
+      case 'premises & utilities':
+      case 'premises and utilities':
+      case 'rent':
+      case 'rates':
+        return 'rent and rates';
+      case 'utilities':
+      case 'utility bills':
+      case 'utility':
+        return 'heat, light and power';
+      case 'travel':
+      case 'travelling':
+      case 'subsistence':
+        return 'travelling and entertainment';
+      case 'office admin':
+      case 'telephone':
+      case 'computer':
+        return 'telephone and computer charges';
+      case 'repair':
+      case 'repair & maintenance':
+      case 'repair and maintenance':
+        return 'maintenance';
+      case 'marketing':
+      case 'advertisement':
+        return 'advertisement and marketing';
+      case 'sundries':
+        return 'general expenses';
+      case 'donations & charity':
+      case 'charity':
+      case 'charity donation':
+        return 'donations and charity';
+      default:
+        return key;
+    }
+  }
+
+  static int _categoryRank(String category) {
+    final key = _normalizeCategoryKey(category);
+    for (var i = 0; i < categoryPnlOrder.length; i++) {
+      if (_normalizeCategoryKey(categoryPnlOrder[i]) == key) {
+        return i;
+      }
+    }
+    return categoryPnlOrder.length + 100;
+  }
+
+  static int compareCategoryNames(String a, String b) {
+    final byRank = _categoryRank(a).compareTo(_categoryRank(b));
+    if (byRank != 0) return byRank;
+    return a.toLowerCase().compareTo(b.toLowerCase());
+  }
+
+  static List<String> sortCategoryNames(
+    Iterable<String> categories, {
+    Map<String, double>? grossTotals,
+    bool byGrossDesc = false,
+  }) {
+    final names = categories
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList();
+    names.sort((a, b) {
+      if (byGrossDesc) {
+        final aGross = grossTotals?[a] ?? 0;
+        final bGross = grossTotals?[b] ?? 0;
+        final grossCmp = bGross.compareTo(aGross);
+        if (grossCmp != 0) return grossCmp;
+      }
+      return compareCategoryNames(a, b);
+    });
+    return names;
+  }
 
   static Database? _db;
 
@@ -359,6 +549,7 @@ class DatabaseService {
       onCreate: (db, version) async {
         await _createProjectsTable(db);
         await _createCategoriesTable(db);
+        await _createCompanyProfileTable(db);
         await _seedDefaultCategories(db);
         await db.execute('''
           CREATE TABLE $_table (
@@ -371,6 +562,7 @@ class DatabaseService {
             supplier TEXT NOT NULL,
             vat REAL NOT NULL DEFAULT 0,
             gross REAL NOT NULL DEFAULT 0,
+            paid_amount REAL NOT NULL DEFAULT 0,
             net REAL NOT NULL DEFAULT 0,
             notes TEXT,
             photo_path TEXT,
@@ -459,6 +651,55 @@ class DatabaseService {
         if (oldV < 8) {
           await _createCombinedReportView(db);
         }
+        if (oldV < 9) {
+          await _migrateToBusinessExpenseCategories(db);
+          await _renameDefaultProjectToOperation(db);
+        }
+        if (oldV < 10) {
+          await _seedDefaultCategories(db);
+        }
+        if (oldV < 11) {
+          await _migrateToCondensedMainCategories(db);
+        }
+        if (oldV < 12) {
+          await _createCompanyProfileTable(db);
+        }
+        if (oldV < 13) {
+          try {
+            await db.execute(
+              'ALTER TABLE $_companyTable ADD COLUMN company_code TEXT NOT NULL DEFAULT \'\'',
+            );
+          } catch (_) {
+            // Column may already exist.
+          }
+          try {
+            await db.execute(
+              'ALTER TABLE $_companyTable ADD COLUMN financial_year_start_month INTEGER NOT NULL DEFAULT 4',
+            );
+          } catch (_) {
+            // Column may already exist.
+          }
+        }
+        if (oldV < 14) {
+          await _migratePremisesUtilitiesSplit(db);
+        }
+        if (oldV < 15) {
+          await _migrateToPnlCategoriesV15(db);
+        }
+        if (oldV < 16) {
+          try {
+            await db.execute(
+              'ALTER TABLE $_table ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0',
+            );
+          } catch (_) {
+            // Column may already exist.
+          }
+          await db.execute('''
+            UPDATE $_table
+            SET paid_amount = gross
+            WHERE paid_amount IS NULL OR ABS(paid_amount) < 0.00001
+          ''');
+        }
       },
     );
 
@@ -478,9 +719,6 @@ class DatabaseService {
     final db = await _open();
     await db.transaction((txn) async {
       await txn.delete(_table);
-      await txn.delete(_projectsTable);
-      await txn.delete(_categoriesTable);
-      await _seedDefaultCategories(txn);
     });
 
     final photosDir = await getPhotosDir();
@@ -531,6 +769,7 @@ class DatabaseService {
           WHERE $existingInvoiceSql = $newInvoiceSql
             AND $existingSupplierSql = $newSupplierSql
             AND r.date = NEW.date
+            AND ABS(r.gross - NEW.gross) < 0.005
         );
       END;
     ''');
@@ -548,6 +787,38 @@ class DatabaseService {
             AND $existingInvoiceSql = $newInvoiceSql
             AND $existingSupplierSql = $newSupplierSql
             AND r.date = NEW.date
+            AND ABS(r.gross - NEW.gross) < 0.005
+        );
+      END;
+    ''');
+
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_supplier_date_gross_insert
+      BEFORE INSERT ON $_table
+      BEGIN
+        SELECT RAISE(ABORT, 'DUPLICATE_SUPPLIER_DATE_GROSS')
+        WHERE EXISTS (
+          SELECT 1
+          FROM $_table r
+          WHERE $existingSupplierSql = $newSupplierSql
+            AND r.date = NEW.date
+            AND ABS(r.gross - NEW.gross) < 0.005
+        );
+      END;
+    ''');
+
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_receipts_no_dup_supplier_date_gross_update
+      BEFORE UPDATE ON $_table
+      BEGIN
+        SELECT RAISE(ABORT, 'DUPLICATE_SUPPLIER_DATE_GROSS')
+        WHERE EXISTS (
+          SELECT 1
+          FROM $_table r
+          WHERE r.id != NEW.id
+            AND $existingSupplierSql = $newSupplierSql
+            AND r.date = NEW.date
+            AND ABS(r.gross - NEW.gross) < 0.005
         );
       END;
     ''');
@@ -559,13 +830,17 @@ class DatabaseService {
         'DROP TRIGGER IF EXISTS trg_receipts_no_dup_invoice_signature_insert');
     await db.execute(
         'DROP TRIGGER IF EXISTS trg_receipts_no_dup_invoice_signature_update');
+    await db.execute(
+        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_supplier_date_gross_insert');
+    await db.execute(
+        'DROP TRIGGER IF EXISTS trg_receipts_no_dup_supplier_date_gross_update');
     await _createDuplicateIntegrityTriggers(db);
   }
 
   static Future<void> _createCombinedReportView(DatabaseExecutor db) async {
     await db.execute('DROP VIEW IF EXISTS $_combinedReportView');
     await db.execute('''
-      CREATE VIEW $_combinedReportView AS
+      CREATE VIEW IF NOT EXISTS $_combinedReportView AS
       SELECT
         r.id AS receipt_id,
         r.project_id AS project_id,
@@ -591,6 +866,21 @@ class DatabaseService {
     ''');
   }
 
+  static Future<void> _createCompanyProfileTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $_companyTable (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        client_name TEXT NOT NULL,
+        company_code TEXT NOT NULL DEFAULT '',
+        business_nature TEXT NOT NULL,
+        business_description TEXT NOT NULL,
+        financial_year_start_month INTEGER NOT NULL DEFAULT 4,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+
   static Future<void> _seedDefaultCategories(DatabaseExecutor db) async {
     final now = DateTime.now().toIso8601String();
     for (final name in defaultCategories) {
@@ -606,21 +896,218 @@ class DatabaseService {
     }
   }
 
+  static Future<void> _migrateToBusinessExpenseCategories(
+      DatabaseExecutor db) async {
+    final now = DateTime.now().toIso8601String();
+    const legacyToNew = <String, String>{
+      'Material': 'Purchases',
+      'Subcontractor': 'Subcontractor',
+      'Utility Bills': 'Utility',
+      'Travel': 'Travelling',
+      'Insurance': 'Fees',
+      'Other': 'Sundries',
+    };
+
+    for (final entry in legacyToNew.entries) {
+      await db.rawUpdate(
+        '''
+        UPDATE $_table
+        SET category = ?, updated_at = ?
+        WHERE LOWER(TRIM(category)) = LOWER(?)
+        ''',
+        [entry.value, now, entry.key],
+      );
+    }
+
+    const businessV9Categories = <String>[
+      'Purchases',
+      'Subcontractor',
+      'Commissions',
+      'Advertisement',
+      'Salary',
+      'Rent',
+      'Rates',
+      'Utility',
+      'Travelling',
+      'Subsistence',
+      'Telephone',
+      'Computer',
+      'Fees',
+      'Repair',
+      'Sundries',
+    ];
+
+    for (final category in businessV9Categories) {
+      await db.rawUpdate(
+        '''
+        UPDATE $_table
+        SET category = ?, updated_at = ?
+        WHERE LOWER(TRIM(category)) = LOWER(?)
+        ''',
+        [category, now, category],
+      );
+    }
+
+    final normalizedDefaults =
+        businessV9Categories.map((c) => c.toLowerCase()).toList();
+    final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE TRIM(COALESCE(category, '')) = ''
+         OR LOWER(TRIM(category)) NOT IN ($placeholders)
+      ''',
+      ['Sundries', now, ...normalizedDefaults],
+    );
+
+    await db.delete(_categoriesTable);
+    final seedNow = DateTime.now().toIso8601String();
+    for (final name in businessV9Categories) {
+      await db.insert(
+        _categoriesTable,
+        {
+          'name': name,
+          'created_at': seedNow,
+          'updated_at': seedNow,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+  }
+
+  static Future<void> _migrateToCondensedMainCategories(
+      DatabaseExecutor db) async {
+    final now = DateTime.now().toIso8601String();
+    const oldToMain = <String, String>{
+      'Purchases': 'Purchases',
+      'Subcontractor': 'Staff & Contractors',
+      'Commissions': 'Professional Fees',
+      'Advertisement': 'Marketing',
+      'Salary': 'Staff & Contractors',
+      'Rent': 'Rent & Rates',
+      'Rates': 'Rent & Rates',
+      'Utility': 'Utilities',
+      'Premises & Utilities': 'Rent & Rates',
+      'Travelling': 'Travel',
+      'Subsistence': 'Travel',
+      'Telephone': 'Office Admin',
+      'Computer': 'Office Admin',
+      'Fees': 'Professional Fees',
+      'Repair': 'Repair & Maintenance',
+      'Sundries': 'Sundries',
+      'Insurance': 'Insurance',
+      'Charity': 'Donations & Charity',
+      'Charity Donation': 'Donations & Charity',
+      'Donations & Charity': 'Donations & Charity',
+    };
+
+    for (final entry in oldToMain.entries) {
+      await db.rawUpdate(
+        '''
+        UPDATE $_table
+        SET category = ?, updated_at = ?
+        WHERE LOWER(TRIM(category)) = LOWER(?)
+        ''',
+        [entry.value, now, entry.key],
+      );
+    }
+
+    final normalizedDefaults =
+        defaultCategories.map((c) => c.toLowerCase()).toList();
+    final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE TRIM(COALESCE(category, '')) = ''
+         OR LOWER(TRIM(category)) NOT IN ($placeholders)
+      ''',
+      ['Sundries', now, ...normalizedDefaults],
+    );
+
+    await db.delete(_categoriesTable);
+    await _seedDefaultCategories(db);
+  }
+
+  static Future<void> _migratePremisesUtilitiesSplit(
+      DatabaseExecutor db) async {
+    final now = DateTime.now().toIso8601String();
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE LOWER(TRIM(category)) = LOWER(?)
+      ''',
+      ['Rent & Rates', now, 'Premises & Utilities'],
+    );
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE LOWER(TRIM(category)) = LOWER(?)
+      ''',
+      ['Utilities', now, 'Utility'],
+    );
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE LOWER(TRIM(category)) = LOWER(?)
+      ''',
+      ['Rent & Rates', now, 'Rent'],
+    );
+    await db.rawUpdate(
+      '''
+      UPDATE $_table
+      SET category = ?, updated_at = ?
+      WHERE LOWER(TRIM(category)) = LOWER(?)
+      ''',
+      ['Rent & Rates', now, 'Rates'],
+    );
+
+    await db.delete(
+      _categoriesTable,
+      where: 'LOWER(TRIM(name)) = LOWER(?)',
+      whereArgs: ['Premises & Utilities'],
+    );
+    await _seedDefaultCategories(db);
+  }
+
+  static Future<void> _migrateToPnlCategoriesV15(DatabaseExecutor db) async {
+    // For v15 we only refresh master categories.
+    // Receipt remapping is intentionally skipped because user is resetting test data.
+    await db.delete(_categoriesTable);
+    await _seedDefaultCategories(db);
+  }
+
+  static Future<void> _renameDefaultProjectToOperation(
+      DatabaseExecutor db) async {
+    await db.rawUpdate(
+      '''
+      UPDATE $_projectsTable
+      SET name = ?, updated_at = ?
+      WHERE LOWER(TRIM(name)) = LOWER(?)
+      ''',
+      ['General Operation', DateTime.now().toIso8601String(), 'General'],
+    );
+  }
+
   static Future<int> _insertDefaultProject(Database db) async {
     final existing = await db.query(
       _projectsTable,
-      where: 'name = ?',
-      whereArgs: ['General'],
+      where: 'LOWER(TRIM(name)) = LOWER(?) OR LOWER(TRIM(name)) = LOWER(?)',
+      whereArgs: ['General Operation', 'General'],
       limit: 1,
     );
     if (existing.isNotEmpty) return existing.first['id'] as int;
     final now = DateTime.now().toIso8601String();
     return db.insert(_projectsTable, {
-      'name': 'General',
+      'name': 'General Operation',
       'address': null,
       'start_date': null,
       'budget': null,
-      'notes': 'Default project for existing receipts',
+      'notes': 'Default operation for existing receipts',
       'created_at': now,
       'updated_at': now,
     });
@@ -686,16 +1173,20 @@ class DatabaseService {
       FROM $_table
       $where
       GROUP BY category
-      ORDER BY total_gross DESC, category ASC
+      ORDER BY category COLLATE NOCASE ASC
     ''', args);
 
     final total = totals.first;
+    final categories = categoryRows
+        .map((r) => CategorySummary.fromMap(r))
+        .toList()
+      ..sort((a, b) => compareCategoryNames(a.category, b.category));
     return ProjectReport(
       receiptCount: (total['receipt_count'] as num?)?.toInt() ?? 0,
       totalNet: (total['total_net'] as num?)?.toDouble() ?? 0,
       totalVat: (total['total_vat'] as num?)?.toDouble() ?? 0,
       totalGross: (total['total_gross'] as num?)?.toDouble() ?? 0,
-      categories: categoryRows.map((r) => CategorySummary.fromMap(r)).toList(),
+      categories: categories,
     );
   }
 
@@ -735,7 +1226,10 @@ class DatabaseService {
 
     final categoriesSet = <String>{};
     final grossByCategoryProject = <String, Map<int, double>>{};
-    final projectTotals = <int, double>{for (final p in projects) if (p.id != null) p.id!: 0};
+    final projectTotals = <int, double>{
+      for (final p in projects)
+        if (p.id != null) p.id!: 0
+    };
     double grandTotal = 0;
 
     for (final row in rows) {
@@ -751,13 +1245,111 @@ class DatabaseService {
       grandTotal += gross;
     }
 
-    final categories = categoriesSet.toList()..sort();
+    final categories = sortCategoryNames(categoriesSet);
 
     return CombinedProjectReport(
       projects: projects,
       categories: categories,
       grossByCategoryProject: grossByCategoryProject,
       projectTotals: projectTotals,
+      grandTotal: grandTotal,
+      invoiceCount: (countRows.first['invoice_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  static Future<MonthlyFiscalActivityReport> getMonthlyFiscalActivityReport({
+    required int fiscalYearStartYear,
+    required int fiscalYearStartMonth,
+    int? projectId,
+    bool useScanDate = false,
+  }) async {
+    final db = await _open();
+    final safeStartMonth = fiscalYearStartMonth.clamp(1, 12);
+    final from = DateTime(fiscalYearStartYear, safeStartMonth, 1);
+    final to = DateTime(from.year + 1, from.month, from.day)
+        .subtract(const Duration(days: 1));
+    final fromStr = Receipt.formatDate(from);
+    final toStr = Receipt.formatDate(to);
+    final dateExpr = useScanDate ? 'substr(created_at, 1, 10)' : 'date';
+
+    final whereParts = <String>[
+      '$dateExpr >= ?',
+      '$dateExpr <= ?',
+    ];
+    final args = <dynamic>[fromStr, toStr];
+    if (projectId != null) {
+      whereParts.add('project_id = ?');
+      args.add(projectId);
+    }
+
+    final where = whereParts.join(' AND ');
+    final rows = await db.rawQuery('''
+      SELECT category, $dateExpr AS row_date, COALESCE(SUM(gross), 0) AS total_gross
+      FROM $_table
+      WHERE $where
+      GROUP BY category, row_date
+      ORDER BY row_date ASC, category COLLATE NOCASE ASC
+    ''', args);
+
+    final countRows = await db.rawQuery('''
+      SELECT COUNT(*) AS invoice_count
+      FROM $_table
+      WHERE $where
+    ''', args);
+
+    final monthStarts = List<DateTime>.generate(
+      12,
+      (index) => DateTime(from.year, from.month + index, 1),
+    );
+
+    final categoryRows = await db.query(
+      _categoriesTable,
+      columns: ['name'],
+      orderBy: 'name COLLATE NOCASE ASC',
+    );
+    final categories = categoryRows
+        .map((row) => (row['name'] as String?)?.trim() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList();
+
+    final categoryMonthGross = <String, List<double>>{
+      for (final category in categories) category: List.filled(12, 0),
+    };
+    final monthTotals = List<double>.filled(12, 0);
+    final categoryTotals = <String, double>{
+      for (final category in categories) category: 0,
+    };
+    double grandTotal = 0;
+
+    for (final row in rows) {
+      final category = (row['category'] as String?)?.trim() ?? '';
+      final rowDateText = (row['row_date'] as String?)?.trim() ?? '';
+      final gross = (row['total_gross'] as num?)?.toDouble() ?? 0;
+      if (category.isEmpty || rowDateText.isEmpty) continue;
+      final parsed = DateTime.tryParse(rowDateText);
+      if (parsed == null) continue;
+      final monthIndex =
+          (parsed.year - from.year) * 12 + parsed.month - from.month;
+      if (monthIndex < 0 || monthIndex >= 12) continue;
+
+      categoryMonthGross.putIfAbsent(category, () => List.filled(12, 0));
+      categoryTotals.putIfAbsent(category, () => 0);
+      categoryMonthGross[category]![monthIndex] += gross;
+      categoryTotals[category] = (categoryTotals[category] ?? 0) + gross;
+      monthTotals[monthIndex] += gross;
+      grandTotal += gross;
+    }
+
+    final sortedCategories = sortCategoryNames(categoryMonthGross.keys);
+
+    return MonthlyFiscalActivityReport(
+      from: from,
+      to: to,
+      months: monthStarts,
+      categories: sortedCategories,
+      categoryMonthGross: categoryMonthGross,
+      monthTotals: monthTotals,
+      categoryTotals: categoryTotals,
       grandTotal: grandTotal,
       invoiceCount: (countRows.first['invoice_count'] as num?)?.toInt() ?? 0,
     );
@@ -800,9 +1392,67 @@ class DatabaseService {
         _categoriesTable,
         orderBy: 'name COLLATE NOCASE ASC',
       );
-      return seeded.map((r) => AppCategory.fromMap(r)).toList();
+      final seededCategories = seeded
+          .map((r) => AppCategory.fromMap(r))
+          .toList()
+        ..sort((a, b) => compareCategoryNames(a.name, b.name));
+      return seededCategories;
     }
-    return rows.map((r) => AppCategory.fromMap(r)).toList();
+    final categories = rows.map((r) => AppCategory.fromMap(r)).toList()
+      ..sort((a, b) => compareCategoryNames(a.name, b.name));
+    return categories;
+  }
+
+  static Future<CompanyProfile?> getCompanyProfile() async {
+    final db = await _open();
+    final rows = await db.query(_companyTable, limit: 1);
+    if (rows.isEmpty) return null;
+    return CompanyProfile.fromMap(rows.first);
+  }
+
+  static Future<CompanyProfile> saveCompanyProfile({
+    required String clientName,
+    required String companyCode,
+    required String businessNature,
+    required String businessDescription,
+    required int financialYearStartMonth,
+  }) async {
+    final trimmedClient = clientName.trim();
+    final trimmedCode = companyCode.trim().toUpperCase();
+    final trimmedNature = businessNature.trim();
+    final trimmedDescription = businessDescription.trim();
+    if (trimmedClient.isEmpty ||
+        trimmedCode.isEmpty ||
+        trimmedNature.isEmpty ||
+        trimmedDescription.isEmpty) {
+      throw ArgumentError(
+        'Client name, company code, business nature, and business description are required.',
+      );
+    }
+    if (financialYearStartMonth < 1 || financialYearStartMonth > 12) {
+      throw ArgumentError('Financial year start month must be from 1 to 12.');
+    }
+
+    final db = await _open();
+    final existing = await getCompanyProfile();
+    final now = DateTime.now();
+    final profile = CompanyProfile(
+      id: 1,
+      clientName: trimmedClient,
+      companyCode: trimmedCode,
+      businessNature: trimmedNature,
+      businessDescription: trimmedDescription,
+      financialYearStartMonth: financialYearStartMonth,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    );
+
+    await db.insert(
+      _companyTable,
+      profile.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    return profile;
   }
 
   static Future<AppCategory> createCategory(String name) async {
@@ -885,7 +1535,7 @@ class DatabaseService {
 
   static Future<int> updateProject(Project project) async {
     if (project.id == null) {
-      throw ArgumentError('Cannot update a project without an id');
+      throw ArgumentError('Cannot update an operation without an id');
     }
     final db = await _open();
     final updated = Project(
@@ -911,12 +1561,13 @@ class DatabaseService {
 
   static Future<int> deleteProject(Project project) async {
     if (project.id == null) {
-      throw ArgumentError('Cannot delete a project without an id');
+      throw ArgumentError('Cannot delete an operation without an id');
     }
     final db = await _open();
     final receiptCount = await count(projectId: project.id);
     if (receiptCount > 0) {
-      throw StateError('Move or delete receipts before deleting this project.');
+      throw StateError(
+          'Move or delete receipts before deleting this operation.');
     }
     return db.delete(
       _projectsTable,
@@ -1210,12 +1861,12 @@ class DatabaseService {
   }
 
   /// Check if a receipt likely already exists.
-  /// Exact invoice+supplier+date matches are global; supplier/date/gross fallback is project-scoped.
+  /// If invoice number exists, match on invoice+supplier+date+gross.
+  /// If invoice number is empty, fallback to supplier+date+gross.
   /// Used to warn about likely duplicates at save time.
   /// Returns the matching existing receipt(s), or empty list if none.
   /// Optionally exclude a specific id (used when editing £ exclude self).
   static Future<List<Receipt>> findPossibleDuplicates({
-    int? projectId,
     String? invoiceNumber,
     required String supplier,
     required DateTime date,
@@ -1225,36 +1876,32 @@ class DatabaseService {
     final db = await _open();
     final args = <dynamic>[];
     final duplicateParts = <String>[];
+    final supplierSql = _normalizedSupplierSql('supplier');
     final normalizedInvoice = normalizeInvoiceNumber(invoiceNumber);
     if (normalizedInvoice.isNotEmpty) {
       final invoiceSql = _normalizedInvoiceSql('invoice_number');
-      final supplierSql = _normalizedSupplierSql('supplier');
       duplicateParts.add(
         "($invoiceSql = ? "
         "AND $supplierSql = ? "
-        "AND date = ?)",
+        "AND date = ? "
+        "AND ABS(gross - ?) < 0.005)",
       );
       args.addAll([
         normalizedInvoice,
         normalizeSupplier(supplier),
         Receipt.formatDate(date),
+        gross,
+      ]);
+    } else {
+      duplicateParts.add(
+        '($supplierSql = ? AND date = ? AND ABS(gross - ?) < 0.005)',
+      );
+      args.addAll([
+        normalizeSupplier(supplier),
+        Receipt.formatDate(date),
+        gross,
       ]);
     }
-
-    final supplierSql = _normalizedSupplierSql('supplier');
-    var fallback = '($supplierSql = ? AND date = ? AND ABS(gross - ?) < 0.005';
-    final fallbackArgs = <dynamic>[
-      normalizeSupplier(supplier),
-      Receipt.formatDate(date),
-      gross,
-    ];
-    if (projectId != null) {
-      fallback += ' AND project_id = ?';
-      fallbackArgs.add(projectId);
-    }
-    fallback += ')';
-    duplicateParts.add(fallback);
-    args.addAll(fallbackArgs);
 
     var where = '(${duplicateParts.join(' OR ')})';
     if (excludeId != null) {
@@ -1311,7 +1958,6 @@ class DatabaseService {
   static Future<Receipt?> findByInvoiceSignature({
     required String invoiceNumber,
     required String supplier,
-    required DateTime date,
     int? excludeId,
   }) async {
     final normalizedInvoice = normalizeInvoiceNumber(invoiceNumber);
@@ -1322,12 +1968,10 @@ class DatabaseService {
     final whereParts = <String>[
       "$invoiceSql = ?",
       "$supplierSql = ?",
-      "date = ?",
     ];
     final args = <dynamic>[
       normalizedInvoice,
       normalizeSupplier(supplier),
-      Receipt.formatDate(date),
     ];
     if (excludeId != null) {
       whereParts.add('id != ?');
@@ -1410,4 +2054,3 @@ class DatabaseService {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 }
-

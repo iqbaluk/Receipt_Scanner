@@ -128,8 +128,13 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Gemini settings'),
-        backgroundColor: colorScheme.primaryContainer,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+            onPressed: () => goToHomePage(context),
+          ),
+        ],
       ),
       body: SafeArea(
         child: _loading
@@ -137,6 +142,12 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  buildPageTitleBanner(
+                    context,
+                    title: 'Gemini settings',
+                    icon: Icons.auto_awesome,
+                  ),
+                  const SizedBox(height: 12),
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),

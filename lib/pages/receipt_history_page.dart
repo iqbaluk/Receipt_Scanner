@@ -1,4 +1,4 @@
-﻿part of '../main.dart';
+part of '../main.dart';
 
 class ReceiptHistoryPage extends StatefulWidget {
   final Project? project;
@@ -17,10 +17,13 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
   bool _tableView = true;
   ExportRange _range = ExportRange.allTime();
   DateBasis _dateBasis = DateBasis.invoiceDate;
+  int? _selectedProjectId;
+  final Set<int> _selectedReceiptIds = <int>{};
 
   @override
   void initState() {
     super.initState();
+    _selectedProjectId = widget.project?.id;
     _loadProjects();
     _loadReceipts();
   }
@@ -34,7 +37,14 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
   Future<void> _loadProjects() async {
     final projects = await DatabaseService.getProjects();
     if (!mounted) return;
-    setState(() => _projects = projects);
+    setState(() {
+      _projects = projects;
+      if (widget.project == null &&
+          _selectedProjectId != null &&
+          !_projects.any((project) => project.id == _selectedProjectId)) {
+        _selectedProjectId = null;
+      }
+    });
   }
 
   Future<void> _loadReceipts({String? query}) async {
@@ -45,12 +55,12 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
           ? await DatabaseService.getByScanDateRange(
               _range.from,
               _range.to,
-              projectId: widget.project?.id,
+              projectId: _selectedProjectId,
             )
           : await DatabaseService.getByDateRange(
               _range.from,
               _range.to,
-              projectId: widget.project?.id,
+              projectId: _selectedProjectId,
             );
       final filtered = rows
           .where((receipt) => _matchesSearchQuery(receipt, searchText))
@@ -58,6 +68,9 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
       if (!mounted) return;
       setState(() {
         _receipts = filtered;
+        final visibleIds =
+            filtered.map((receipt) => receipt.id).whereType<int>().toSet();
+        _selectedReceiptIds.removeWhere((id) => !visibleIds.contains(id));
         _loading = false;
       });
     } catch (e) {
@@ -109,38 +122,11 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
   }
 
   Future<void> _openReportsFromInvoiceList() async {
-    Project? target = widget.project;
-    if (target == null) {
-      if (_projects.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No projects available for reports.')),
-        );
-        return;
-      }
-      final selected = await showDialog<Project>(
-        context: context,
-        builder: (ctx) => SimpleDialog(
-          title: const Text('Choose project report'),
-          children: [
-            for (final project in _projects)
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, project),
-                child: Text(project.name),
-              ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-          ],
-        ),
-      );
-      if (selected == null || !mounted) return;
-      target = selected;
-    }
-
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ProjectReportPage(project: target!),
+        builder: (_) => ReportsHubPage(
+          initialProject: _selectedProject ?? widget.project,
+        ),
       ),
     );
   }
@@ -206,13 +192,17 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Building export...')),
     );
+    final selectedReceipts = _selectedReceipts;
+    final activeReceipts =
+        selectedReceipts.isNotEmpty ? selectedReceipts : _receipts;
 
     final result = await ExportService.exportAndShare(
       _range,
       content: contentChoice,
       dateBasis: _dateBasis,
-      projectId: widget.project?.id,
-      projectName: widget.project?.name,
+      projectId: _selectedProjectId,
+      projectName: _selectedProjectName,
+      explicitReceipts: activeReceipts,
     );
 
     if (!mounted) return;
@@ -229,26 +219,100 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
     );
   }
 
-  void _resetSearch() {
+  Future<void> _printInvoiceList() async {
+    final selectedReceipts = _selectedReceipts;
+    final activeReceipts =
+        selectedReceipts.isNotEmpty ? selectedReceipts : _receipts;
+    if (activeReceipts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No receipts to print in this view.')),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Preparing invoice list for print...')),
+    );
+    try {
+      final pdfBytes = await ExportService.buildInvoiceListPdfBytes(
+        receipts: activeReceipts,
+        range: _range,
+        dateBasis: _dateBasis,
+        projectName: _selectedProjectName,
+      );
+      if (!mounted) return;
+      await openInAppPrintPreview(
+        context,
+        title: 'Print invoice list',
+        fileName: 'invoice_list_${_range.label}.pdf',
+        pdfBytes: pdfBytes,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Print failed: $e')),
+      );
+    }
+  }
+
+  void _clearSearch() {
     _searchController.clear();
     _loadReceipts(query: '');
   }
 
-  String _rangeLabel() {
-    switch (_range.label) {
-      case 'all_time':
-        return 'All receipts';
-      case 'this_month':
-        return DateFormat('MMMM yyyy').format(_range.from);
-      case 'last_month':
-        return DateFormat('MMMM yyyy').format(_range.from);
-      default:
-        if (_range.label.startsWith('this_year')) {
-          return 'Year ${_range.from.year}';
-        }
-        return '${DateFormat('dd/MM/yy').format(_range.from)} - ${DateFormat('dd/MM/yy').format(_range.to)}';
-    }
+  void _resetFilters() {
+    _searchController.clear();
+    setState(() {
+      _range = ExportRange.allTime();
+      _dateBasis = DateBasis.invoiceDate;
+      if (widget.project == null) {
+        _selectedProjectId = null;
+      }
+    });
+    _loadReceipts(query: '');
   }
+
+  bool _isSelected(Receipt receipt) {
+    final id = receipt.id;
+    if (id == null) return false;
+    return _selectedReceiptIds.contains(id);
+  }
+
+  void _toggleSelection(Receipt receipt, bool selected) {
+    final id = receipt.id;
+    if (id == null) return;
+    setState(() {
+      if (selected) {
+        _selectedReceiptIds.add(id);
+      } else {
+        _selectedReceiptIds.remove(id);
+      }
+    });
+  }
+
+  void _selectAllVisible() {
+    setState(() {
+      for (final receipt in _receipts) {
+        final id = receipt.id;
+        if (id != null) _selectedReceiptIds.add(id);
+      }
+    });
+  }
+
+  void _clearAllSelected() {
+    setState(() => _selectedReceiptIds.clear());
+  }
+
+  Project? get _selectedProject {
+    final id = _selectedProjectId;
+    if (id == null) return null;
+    for (final project in _projects) {
+      if (project.id == id) return project;
+    }
+    if (widget.project?.id == id) return widget.project;
+    return null;
+  }
+
+  String? get _selectedProjectName => _selectedProject?.name;
 
   String _projectName(int? id) {
     if (id == null) return 'Unassigned';
@@ -256,11 +320,14 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
       if (project.id == id) return project.name;
     }
     if (widget.project?.id == id) return widget.project!.name;
-    return 'Project $id';
+    return 'Operation $id';
   }
 
   double get _totalGross =>
       _receipts.fold<double>(0, (sum, receipt) => sum + receipt.gross);
+
+  List<Receipt> get _selectedReceipts =>
+      _receipts.where(_isSelected).toList(growable: false);
 
   String _money(double value) => formatAppMoney(value);
 
@@ -270,18 +337,26 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Invoice List'),
-        backgroundColor: colorScheme.primaryContainer,
         actions: [
+          IconButton(
+            onPressed: () => goToHomePage(context),
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+          ),
           IconButton(
             onPressed: _pickRange,
             icon: const Icon(Icons.date_range),
-            tooltip: 'Date range',
+            tooltip: 'Period',
           ),
           IconButton(
             onPressed: _showInvoiceListExportMenu,
-            icon: const Icon(Icons.cloud_upload),
+            icon: const Icon(Icons.cloud_upload_outlined),
             tooltip: 'Upload/share',
+          ),
+          IconButton(
+            onPressed: _printInvoiceList,
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Print invoice list',
           ),
           PopupMenuButton<DateBasis>(
             tooltip: 'Date filter',
@@ -298,10 +373,22 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
               ),
             ],
           ),
-          IconButton(
-            onPressed: _openReportsFromInvoiceList,
-            icon: const Icon(Icons.bar_chart),
-            tooltip: 'Reports',
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              switch (value) {
+                case 'reports':
+                  _openReportsFromInvoiceList();
+                  break;
+              }
+            },
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 'reports',
+                child: Text('Reports hub'),
+              ),
+            ],
           ),
         ],
       ),
@@ -309,6 +396,8 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _buildHistoryBanner(colorScheme),
+            const SizedBox(height: 12),
             TextField(
               controller: _searchController,
               decoration: InputDecoration(
@@ -318,7 +407,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
                 suffixIcon: _searchController.text.isEmpty
                     ? null
                     : IconButton(
-                        onPressed: _resetSearch,
+                        onPressed: _clearSearch,
                         icon: const Icon(Icons.close),
                         tooltip: 'Clear search',
                       ),
@@ -327,29 +416,41 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
               onChanged: (value) => _loadReceipts(query: value),
               onSubmitted: (value) => _loadReceipts(query: value),
             ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '${_rangeLabel()} Â· ${_dateBasis == DateBasis.scanDate ? "Scan date" : "Invoice date"}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+            if (widget.project == null) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int?>(
+                initialValue: _selectedProjectId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Operation filter',
+                  prefixIcon: Icon(Icons.business_center_outlined),
+                ),
+                items: [
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('All operations'),
+                  ),
+                  ..._projects.map(
+                    (project) => DropdownMenuItem<int?>(
+                      value: project.id,
+                      child: Text(project.name),
                     ),
+                  ),
+                ],
+                onChanged: (value) {
+                  setState(() => _selectedProjectId = value);
+                  _loadReceipts(query: _searchController.text);
+                },
               ),
-            ),
-            const SizedBox(height: 10),
+            ],
+            const SizedBox(height: 12),
             Wrap(
               spacing: 10,
               runSpacing: 10,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _resetSearch,
+                  onPressed: _resetFilters,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Reset'),
                 ),
@@ -390,6 +491,26 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _receipts.isEmpty ? null : _selectAllVisible,
+                  icon: const Icon(Icons.select_all),
+                  label: const Text('Select all'),
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      _selectedReceiptIds.isEmpty ? null : _clearAllSelected,
+                  icon: const Icon(Icons.deselect),
+                  label: const Text('Clear all'),
+                ),
+                if (_selectedReceiptIds.isNotEmpty)
+                  Chip(label: Text('Selected: ${_selectedReceiptIds.length}')),
+              ],
+            ),
             const SizedBox(height: 14),
             if (_loading)
               const Padding(
@@ -400,14 +521,14 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(6),
+                  color: colorScheme.surfaceContainerLowest,
+                  border: Border.all(color: colorScheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
                     'No matching invoices.',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 ),
               )
@@ -415,6 +536,8 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
               _InvoiceTable(
                 receipts: _receipts,
                 onOpen: _openDetail,
+                isSelected: _isSelected,
+                onSelectionChanged: _toggleSelection,
               )
             else
               for (final receipt in _receipts) ...[
@@ -424,6 +547,9 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
                       ? _projectName(receipt.projectId)
                       : null,
                   onTap: () => _openDetail(receipt),
+                  selected: _isSelected(receipt),
+                  onSelectedChanged: (selected) =>
+                      _toggleSelection(receipt, selected),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -432,15 +558,57 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
       ),
     );
   }
+
+  Widget _buildHistoryBanner(ColorScheme colorScheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        gradient: AppDecor.heroGradient(colorScheme),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: AppDecor.softShadow(colorScheme),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: colorScheme.onPrimary.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              _tableView ? Icons.table_rows : Icons.view_agenda,
+              color: colorScheme.onPrimary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Invoice list and exports',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _InvoiceTable extends StatelessWidget {
   final List<Receipt> receipts;
   final ValueChanged<Receipt> onOpen;
+  final bool Function(Receipt receipt) isSelected;
+  final void Function(Receipt receipt, bool selected) onSelectionChanged;
 
   const _InvoiceTable({
     required this.receipts,
     required this.onOpen,
+    required this.isSelected,
+    required this.onSelectionChanged,
   });
 
   @override
@@ -458,18 +626,19 @@ class _InvoiceTable extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Table(
         columnWidths: const {
-          0: FlexColumnWidth(2.8),
-          1: FlexColumnWidth(4.0),
-          2: FlexColumnWidth(3.2),
+          0: FlexColumnWidth(1.3),
+          1: FlexColumnWidth(2.8),
+          2: FlexColumnWidth(4.0),
+          3: FlexColumnWidth(3.2),
         },
         children: [
           TableRow(
             decoration: BoxDecoration(color: colorScheme.surfaceContainerHigh),
             children: [
+              _InvoiceTableCell('Sel', style: headerStyle),
               _InvoiceTableCell('Date', style: headerStyle),
               _InvoiceTableCell('Supplier', style: headerStyle),
-              _InvoiceTableCell('Gross',
-                  style: headerStyle, alignRight: true),
+              _InvoiceTableCell('Gross', style: headerStyle, alignRight: true),
             ],
           ),
           for (final receipt in receipts)
@@ -480,6 +649,18 @@ class _InvoiceTable extends StatelessWidget {
                 ),
               ),
               children: [
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  child: Center(
+                    child: Checkbox(
+                      value: isSelected(receipt),
+                      visualDensity: VisualDensity.compact,
+                      onChanged: (value) =>
+                          onSelectionChanged(receipt, value ?? false),
+                    ),
+                  ),
+                ),
                 _InvoiceTableCell(
                   DateFormat('dd/MM/yy').format(receipt.date),
                   fitText: true,
@@ -538,7 +719,8 @@ class _InvoiceTableCell extends StatelessWidget {
       child: fitText
           ? FittedBox(
               fit: BoxFit.scaleDown,
-              alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
+              alignment:
+                  alignRight ? Alignment.centerRight : Alignment.centerLeft,
               child: textWidget,
             )
           : textWidget,
@@ -552,15 +734,20 @@ class _HistoryReceiptTile extends StatelessWidget {
   final Receipt receipt;
   final String? projectName;
   final VoidCallback onTap;
+  final bool selected;
+  final ValueChanged<bool> onSelectedChanged;
 
   const _HistoryReceiptTile({
     required this.receipt,
     this.projectName,
     required this.onTap,
+    required this.selected,
+    required this.onSelectedChanged,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final subtitleParts = [
       '#${(receipt.scanNo ?? 0).toString().padLeft(5, '0')}',
       receipt.category,
@@ -571,9 +758,11 @@ class _HistoryReceiptTile extends StatelessWidget {
 
     return ListTile(
       onTap: onTap,
+      selected: selected,
+      selectedTileColor: colorScheme.primaryContainer.withValues(alpha: 0.35),
       shape: RoundedRectangleBorder(
-        side: BorderSide(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(6),
+        side: BorderSide(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
       ),
       leading: receipt.photoPath == null
           ? const Icon(Icons.receipt_long)
@@ -602,10 +791,15 @@ class _HistoryReceiptTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       trailing: SizedBox(
-        width: 92,
+        width: 128,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
+            Checkbox(
+              value: selected,
+              visualDensity: VisualDensity.compact,
+              onChanged: (value) => onSelectedChanged(value ?? false),
+            ),
             Flexible(
               child: Text(
                 formatAppMoney(receipt.gross),
@@ -622,6 +816,3 @@ class _HistoryReceiptTile extends StatelessWidget {
     );
   }
 }
-
-
-

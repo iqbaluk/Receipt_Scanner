@@ -43,7 +43,7 @@ class _CategoryManagerPageState extends State<CategoryManagerPage> {
   Future<void> _addCategory() async {
     final name = _newCategoryController.text.trim();
     if (name.isEmpty) {
-      _showMessage('Enter a category name first.');
+      _showMessage('Enter an expense category name first.');
       return;
     }
     try {
@@ -147,13 +147,24 @@ class _CategoryManagerPageState extends State<CategoryManagerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Categories'),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            tooltip: 'Home',
+            onPressed: () => goToHomePage(context),
+          ),
+        ],
       ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            buildPageTitleBanner(
+              context,
+              title: 'Expense categories',
+              icon: Icons.category_outlined,
+            ),
+            const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -167,7 +178,7 @@ class _CategoryManagerPageState extends State<CategoryManagerPage> {
                       controller: _newCategoryController,
                       textCapitalization: TextCapitalization.words,
                       decoration: const InputDecoration(
-                        labelText: 'New category',
+                        labelText: 'New expense category',
                         border: OutlineInputBorder(),
                       ),
                       onSubmitted: (_) => _addCategory(),

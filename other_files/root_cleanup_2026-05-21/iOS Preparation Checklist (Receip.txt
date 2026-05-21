@@ -1,0 +1,94 @@
+# iOS Preparation Checklist (Receipt Scanner)
+
+Target date: **21 May 2026**
+
+## 1) Prepare Now (Windows)
+
+1. Open project folder:
+   - `C:\Users\iqbal\Projects\Receipt_scanner_Android`
+2. Run health check:
+   - `cls; cd C:\Users\iqbal\Projects\Receipt_scanner_Android; flutter pub get; flutter analyze`
+3. Confirm final app identity values:
+   - App name (user-facing)
+   - Bundle ID (example: `com.yourcompany.receiptscanner`)
+   - Version + build number
+4. Confirm required assets:
+   - App icon: `1024x1024` PNG
+   - Any splash/logo images
+5. Confirm Gemini behavior for iOS:
+   - `.env` exists or in-app Gemini key setup flow is tested
+6. Keep latest Android-tested code as baseline.
+
+## 2) Mac Setup (On 21 May 2026)
+
+1. Install/update:
+   - Xcode
+   - Flutter SDK
+   - CocoaPods
+2. Open Terminal and run:
+   - `flutter doctor`
+3. From project root:
+   - `cd ~/.../Receipt_scanner_Android`
+   - `flutter create --platforms=ios .`
+   - `flutter pub get`
+4. Install iOS pods:
+   - `cd ios`
+   - `pod install`
+   - `cd ..`
+
+## 3) iOS Permissions / Info.plist
+
+Set clear usage descriptions in `ios/Runner/Info.plist`:
+
+1. Camera usage description
+2. Photo library usage description
+3. Photo library add usage description (if needed for save/export)
+
+Example wording:
+- Camera: "This app uses camera to capture receipt images."
+- Photos: "This app uses photos to import receipt images for processing."
+
+## 4) Signing & Bundle Setup (Xcode)
+
+1. Open:
+   - `ios/Runner.xcworkspace`
+2. In **Runner > Signing & Capabilities**:
+   - Select Apple Team
+   - Set Bundle Identifier
+   - Enable Automatic signing
+3. Set deployment target as needed for client devices.
+
+## 5) Build and Run on iPhone
+
+1. Connect iPhone to Mac
+2. Run:
+   - `flutter run -d <ios_device_id>`
+3. Test core flows:
+   - Create operation
+   - Scan/manual receipt save
+   - Duplicate blocking
+   - Paid vs Gross mismatch note
+   - Export/share
+   - Backup/restore
+
+## 6) Release Build / TestFlight
+
+1. Create release build:
+   - `flutter build ios --release`
+2. Archive in Xcode:
+   - Product > Archive
+3. Upload via Organizer to App Store Connect
+4. Distribute through TestFlight to client testers.
+
+## 7) Ready-to-Send Items
+
+1. Test instructions for client
+2. Known limitations list
+3. Version notes (what changed from Android test build)
+4. Support contact path for key issues.
+
+## 8) Risk Notes
+
+1. iOS build depends on compatible Xcode/macOS.
+2. First pod install/build can take time.
+3. Keep free disk space for Xcode caches and derived data.

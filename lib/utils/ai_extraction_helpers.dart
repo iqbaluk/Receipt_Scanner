@@ -22,16 +22,41 @@ String categoryExamplesPrompt(List<String> categories) {
     }
   }
 
+  addIfPresent('Purchases',
+      'Stock and direct materials for resale/production, trade supplies, wholesale');
+  addIfPresent('Labour / Subcontractor',
+      'Payroll, wages, subcontractor labour, agency staff, consultants');
+  addIfPresent('Rent and Rates',
+      'Office/shop/workshop rent, business rates, property rates');
   addIfPresent(
-    'Material',
-    'B&Q, Travis Perkins, Wickes, Selco, Howdens, Screwfix',
-  );
-  addIfPresent('Subcontractor', 'A plumber, electrician, builder invoice');
-  addIfPresent('Utility Bills', 'Gas, electricity, water, council tax');
-  addIfPresent('Travel', 'Train, taxi, parking, fuel');
-  addIfPresent('Insurance', 'Public liability or building insurance');
-  addIfPresent('Sundries', 'Tea, biscuits, small consumables');
-  addIfPresent('Other', 'Anything that does not fit the other categories');
+      'Heat, Light and Power', 'Electricity, gas, water, and utility bills');
+  addIfPresent('Motor Expenses',
+      'Vehicle fuel, repairs, insurance, road costs, and business mileage');
+  addIfPresent('Travelling and Entertainment',
+      'Train, taxi, flights, hotels, meals while travelling, client entertainment');
+  addIfPresent(
+      'Printing and Stationery', 'Paper, ink, office supplies, printing');
+  addIfPresent('Telephone and Computer Charges',
+      'Phone bills, internet, software subscriptions, computer services');
+  addIfPresent('Equipment Hire and Rental',
+      'Short-term hire/rental of equipment, plant, and machinery');
+  addIfPresent(
+      'Maintenance', 'Repairs, cleaning, maintenance materials, and upkeep');
+  addIfPresent(
+      'Bank Charges and Interest', 'Bank fees, card fees, overdraft interest');
+  addIfPresent(
+      'Depreciation', 'Depreciation journals and accountant adjustments');
+  addIfPresent('Bad Debts', 'Written-off receivables and bad debt adjustments');
+  addIfPresent('Advertisement and Marketing',
+      'Facebook/Google ads, print ads, promotions, events');
+  addIfPresent('Professional Fees',
+      'Legal, accounting, subscriptions, bank charges, service fees');
+  addIfPresent(
+      'Insurance', 'Business, premises, liability, or vehicle insurance');
+  addIfPresent('General Expenses',
+      'Groceries/refreshments, cleaning supplies, and small miscellaneous expenses');
+  addIfPresent('Donations and Charity',
+      'Charity donations and charitable contributions');
 
   if (lines.isEmpty) {
     return '- Use the closest matching configured category.';
@@ -39,64 +64,207 @@ String categoryExamplesPrompt(List<String> categories) {
   return lines.join('\n');
 }
 
-String categoryDecisionHintsPrompt(List<String> categories) {
+String categoryDecisionHintsPrompt(
+  List<String> categories, {
+  String? businessNature,
+  String? businessDescription,
+}) {
+  final purchasesCategory = findCategoryByKeywords(
+    categories,
+    const ['purchase', 'stock', 'goods', 'supply', 'material'],
+  );
+  final labourSubcontractorCategory = findCategoryByKeywords(
+    categories,
+    const [
+      'labour / subcontractor',
+      'labour/subcontractor',
+      'gross wages',
+      'staff',
+      'contractor',
+      'labour',
+      'payroll',
+      'subcontract'
+    ],
+  );
+  final rentRatesCategory = findCategoryByKeywords(
+    categories,
+    const ['rent and rates', 'rent', 'rates', 'premises'],
+  );
+  final utilitiesCategory = findCategoryByKeywords(
+    categories,
+    const [
+      'heat',
+      'light',
+      'power',
+      'utilit',
+      'electric',
+      'water',
+      'gas',
+      'waste'
+    ],
+  );
+  final motorCategory = findCategoryByKeywords(
+    categories,
+    const ['motor', 'vehicle', 'fuel'],
+  );
+  final travelEntertainmentCategory = findCategoryByKeywords(
+    categories,
+    const [
+      'travel',
+      'travelling',
+      'transport',
+      'parking',
+      'subsistence',
+      'tfl',
+      'entertainment'
+    ],
+  );
+  final printingCategory = findCategoryByKeywords(
+    categories,
+    const ['printing', 'stationery', 'postage'],
+  );
+  final phoneComputerCategory = findCategoryByKeywords(
+    categories,
+    const ['telephone', 'computer', 'internet', 'software'],
+  );
+  final equipmentHireCategory = findCategoryByKeywords(
+    categories,
+    const ['equipment hire', 'rental', 'hire'],
+  );
+  final maintenanceCategory = findCategoryByKeywords(
+    categories,
+    const ['maintenance', 'repair', 'cleaning'],
+  );
+  final bankChargesCategory = findCategoryByKeywords(
+    categories,
+    const ['bank charges', 'interest', 'bank'],
+  );
+  final depreciationCategory = findCategoryByKeywords(
+    categories,
+    const ['depreciation'],
+  );
+  final badDebtsCategory = findCategoryByKeywords(
+    categories,
+    const ['bad debts', 'bad debt'],
+  );
+  final marketingCategory = findCategoryByKeywords(
+    categories,
+    const ['advertisement', 'marketing', 'advert', 'promotion', 'campaign'],
+  );
+  final professionalFeesCategory = findCategoryByKeywords(
+    categories,
+    const ['professional', 'fees', 'legal', 'account'],
+  );
   final insuranceCategory = findCategoryByKeywords(
     categories,
     const ['insurance'],
   );
-  final serviceCategory = findCategoryByKeywords(
+  final generalExpensesCategory = findCategoryByKeywords(
     categories,
-    const ['subcontractor', 'professional', 'labour', 'labor', 'service'],
+    const ['general expenses', 'sundries', 'misc', 'other'],
   );
-  final materialCategory = findCategoryByKeywords(
+  final donationsCategory = findCategoryByKeywords(
     categories,
-    const ['material', 'sundries', 'supply'],
-  );
-  final travelCategory = findCategoryByKeywords(
-    categories,
-    const ['travel', 'transport', 'fuel', 'mileage', 'parking'],
-  );
-  final utilitiesCategory = findCategoryByKeywords(
-    categories,
-    const ['utility', 'utilities', 'electric', 'water', 'gas'],
-  );
-  final otherCategory = findCategoryByKeywords(
-    categories,
-    const ['other', 'misc'],
+    const ['donation', 'charity'],
   );
 
   final lines = <String>[];
-  if (insuranceCategory != null) {
+  final contextBits = <String>[
+    businessNature?.trim() ?? '',
+    businessDescription?.trim() ?? '',
+  ].where((v) => v.isNotEmpty).toList();
+  if (contextBits.isNotEmpty) {
     lines.add(
-      '- Use "$insuranceCategory" ONLY for policy/premium/cover documents from insurers or brokers.',
+      '- Business context: ${contextBits.join(' | ')}. Use this context when two categories look similar.',
     );
-    final fallback = serviceCategory ?? otherCategory ?? categories.first;
     lines.add(
-      '- Inspection/survey/certificate/assessment/compliance jobs are NOT insurance; prefer "$fallback".',
+      '- Context override examples: groceries for restaurant can be Purchases; groceries for office can be General/Office expenses.',
+    );
+    lines.add(
+      '- Context override examples: fuel for transport/logistics can be Purchases; fuel for normal office can be Travel/Motor.',
+    );
+    lines.add(
+      '- Context override examples: car parts for garage can be Purchases; car parts for non-garage business can be Motor expenses.',
+    );
+    lines.add(
+      '- Context override examples: paper for publisher can be Purchases; paper for office can be Printing/Stationery.',
     );
   }
-  if (serviceCategory != null) {
+  if (purchasesCategory != null) {
     lines.add(
-      '- Labour/service/trade callout invoices (inspection, electrician, plumber, fitting, repair) -> "$serviceCategory".',
+      '- Resale stock, wholesale supply, and direct production materials -> "$purchasesCategory".',
     );
   }
-  if (materialCategory != null) {
+  if (labourSubcontractorCategory != null) {
     lines.add(
-      '- Goods and parts purchases (timber, paint, tools, hardware, consumables) -> "$materialCategory".',
+      '- Salaries, wages, CIS labour, and contractor invoices -> "$labourSubcontractorCategory".',
     );
   }
-  if (travelCategory != null) {
+  if (rentRatesCategory != null) {
     lines.add(
-      '- Train/taxi/fuel/parking/tolls/mileage receipts -> "$travelCategory".',
+      '- Rent, lease, and business rates -> "$rentRatesCategory".',
     );
   }
   if (utilitiesCategory != null) {
     lines.add(
-      '- Electricity, gas, water, telecom or council bills -> "$utilitiesCategory".',
+      '- Electricity, gas, water, and waste bills -> "$utilitiesCategory".',
     );
   }
+  if (motorCategory != null) {
+    lines.add(
+        '- Vehicle fuel, repairs, and motor running costs -> "$motorCategory".');
+  }
+  if (travelEntertainmentCategory != null) {
+    lines.add(
+      '- Travel fares, parking, subsistence, and business entertainment -> "$travelEntertainmentCategory".',
+    );
+  }
+  if (printingCategory != null) {
+    lines.add('- Printing, stationery, and postage -> "$printingCategory".');
+  }
+  if (phoneComputerCategory != null) {
+    lines.add(
+        '- Phone bills, internet, software subscriptions, and computer services -> "$phoneComputerCategory".');
+  }
+  if (equipmentHireCategory != null) {
+    lines.add('- Equipment hire and rental costs -> "$equipmentHireCategory".');
+  }
+  if (maintenanceCategory != null) {
+    lines.add(
+        '- Property/equipment repairs, cleaning, and upkeep -> "$maintenanceCategory".');
+  }
+  if (bankChargesCategory != null) {
+    lines.add(
+        '- Bank charges, card fees, and interest -> "$bankChargesCategory".');
+  }
+  if (depreciationCategory != null) {
+    lines.add('- Depreciation adjustments -> "$depreciationCategory".');
+  }
+  if (badDebtsCategory != null) {
+    lines.add('- Bad debt write-offs -> "$badDebtsCategory".');
+  }
+  if (marketingCategory != null) {
+    lines.add(
+      '- Marketing, ad platforms, campaign, and promotion costs -> "$marketingCategory".',
+    );
+  }
+  if (professionalFeesCategory != null) {
+    lines.add(
+        '- Legal, accounting, and professional services -> "$professionalFeesCategory".');
+  }
+  if (insuranceCategory != null) {
+    lines.add('- Insurance policies and premiums -> "$insuranceCategory".');
+  }
+  if (generalExpensesCategory != null) {
+    lines.add(
+      '- Groceries, tea/coffee/milk, cleaning items, and incidental small expenses -> "$generalExpensesCategory".',
+    );
+  }
+  if (donationsCategory != null) {
+    lines.add('- Charity and donation payments -> "$donationsCategory".');
+  }
   if (lines.isEmpty) {
-    final fallback = otherCategory ?? categories.first;
+    final fallback = generalExpensesCategory ?? categories.first;
     lines.add('- If uncertain, use "$fallback" and avoid guessing.');
   }
   return lines.join('\n');
@@ -132,4 +300,3 @@ DateTime? parseIsoOrUkDate(String? value) {
     return null;
   }
 }
-
