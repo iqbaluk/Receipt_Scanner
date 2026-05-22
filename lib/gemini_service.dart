@@ -7,6 +7,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -472,36 +473,54 @@ class GeminiService {
     }
 
     try {
+      final totalStopwatch = Stopwatch()..start();
       String? ocrText;
       String? ocrTopRightText;
       String? localOcrInvoiceNumber;
-      if (!fastMode && imagePath != null && imagePath.trim().isNotEmpty) {
-        debugPrint('SCAN_PATH local_ocr=enabled imagePath=true');
-        final ocrSnapshot =
-            await _extractOcrSnapshotFromImagePath(imagePath.trim());
+      String aiMimeType = 'image/jpeg';
+      Uint8List aiImageBytes = imageBytes;
+      Future<_OcrSnapshot?>? ocrSnapshotFuture;
+      var ocrResolved = false;
+      Future<void> ensureOcrPrepared() async {
+        if (ocrResolved) return;
+        ocrResolved = true;
+        final ocrStopwatch = Stopwatch()..start();
+        final ocrSnapshot = await ocrSnapshotFuture;
+        ocrStopwatch.stop();
+        debugPrint('SCAN_TIMING ocr_ms=${ocrStopwatch.elapsedMilliseconds}');
         ocrText = ocrSnapshot?.fullText;
         ocrTopRightText = ocrSnapshot?.topRightHeaderText;
-        if (ocrTopRightText != null && ocrTopRightText.trim().isNotEmpty) {
+        if (ocrTopRightText != null && ocrTopRightText!.trim().isNotEmpty) {
+          final topRightText = ocrTopRightText!;
           localOcrInvoiceNumber =
-              _extractInvoiceNumberFromOcrText(ocrTopRightText);
+              _extractInvoiceNumberFromOcrText(topRightText);
         }
         if ((localOcrInvoiceNumber == null ||
-                localOcrInvoiceNumber.trim().isEmpty) &&
+                localOcrInvoiceNumber!.trim().isEmpty) &&
             ocrText != null &&
-            ocrText.trim().isNotEmpty) {
+            ocrText!.trim().isNotEmpty) {
           final deterministicInvoice =
-              _extractInvoiceNumberDeterministic(ocrText);
+              _extractInvoiceNumberDeterministic(ocrText!);
           if (deterministicInvoice != null &&
               deterministicInvoice.trim().isNotEmpty) {
             localOcrInvoiceNumber = deterministicInvoice;
           }
         }
         if ((localOcrInvoiceNumber == null ||
-                localOcrInvoiceNumber.trim().isEmpty) &&
+                localOcrInvoiceNumber!.trim().isEmpty) &&
             ocrText != null &&
-            ocrText.trim().isNotEmpty) {
-          localOcrInvoiceNumber = _extractInvoiceNumberFromOcrText(ocrText);
+            ocrText!.trim().isNotEmpty) {
+          localOcrInvoiceNumber = _extractInvoiceNumberFromOcrText(ocrText!);
         }
+      }
+
+      if (!fastMode && imagePath != null && imagePath.trim().isNotEmpty) {
+        debugPrint('SCAN_PATH local_ocr=enabled imagePath=true');
+        // Start OCR in parallel with Gemini call to reduce end-to-end latency.
+        ocrSnapshotFuture = _extractOcrSnapshotFromImagePath(imagePath.trim());
+        final prepared = await _prepareAiImagePayloadForQuality(imageBytes);
+        aiImageBytes = prepared.bytes;
+        aiMimeType = prepared.mimeType;
       } else {
         debugPrint('SCAN_PATH local_ocr=skipped fastMode=$fastMode');
       }
@@ -582,18 +601,23 @@ $hints
 ''';
 
       // ---- Send the image with a timeout ----
+      final primaryStopwatch = Stopwatch()..start();
       final response = await model.generateContent([
         Content.multi([
           TextPart(prompt),
-          DataPart('image/jpeg', imageBytes),
+          DataPart(aiMimeType, aiImageBytes),
         ]),
       ]).timeout(
-        Duration(seconds: fastMode ? 20 : 25),
+        Duration(seconds: fastMode ? 20 : 45),
         onTimeout: () => throw TimeoutException(
           fastMode
               ? 'Gemini took too long to respond (>20s)'
-              : 'Gemini took too long to respond (>25s)',
+              : 'Gemini took too long to respond (>45s)',
         ),
+      );
+      primaryStopwatch.stop();
+      debugPrint(
+        'SCAN_TIMING primary_ms=${primaryStopwatch.elapsedMilliseconds} payload_bytes=${aiImageBytes.length}',
       );
 
       // ---- Parse the response ----
@@ -613,13 +637,17 @@ $hints
 
       // Use local OCR text for numeric fallback only when AI misses paid amount.
       if ((patchedData.paidAmount == null || patchedData.paidAmount! <= 0) &&
+          ocrSnapshotFuture != null) {
+        await ensureOcrPrepared();
+      }
+      if ((patchedData.paidAmount == null || patchedData.paidAmount! <= 0) &&
           ocrText != null &&
-          ocrText.trim().isNotEmpty) {
-        final paidFromOcr = _extractPaidAmountByRegex(ocrText);
+          ocrText!.trim().isNotEmpty) {
+        final paidFromOcr = _extractPaidAmountByRegex(ocrText!);
         if (paidFromOcr != null && paidFromOcr > 0) {
           patchedData = patchedData.copyWith(paidAmount: paidFromOcr);
         } else if (patchedData.gross != null) {
-          final balanceDue = _extractBalanceDueByRegex(ocrText);
+          final balanceDue = _extractBalanceDueByRegex(ocrText!);
           if (balanceDue != null && balanceDue >= 0) {
             final derivedPaid = (patchedData.gross! - balanceDue);
             if (derivedPaid >= 0) {
@@ -631,8 +659,13 @@ $hints
 
       if ((parsed.data!.invoiceNumber == null ||
               parsed.data!.invoiceNumber!.trim().isEmpty) &&
+          ocrSnapshotFuture != null) {
+        await ensureOcrPrepared();
+      }
+      if ((parsed.data!.invoiceNumber == null ||
+              parsed.data!.invoiceNumber!.trim().isEmpty) &&
           localOcrInvoiceNumber != null &&
-          localOcrInvoiceNumber.trim().isNotEmpty) {
+          localOcrInvoiceNumber!.trim().isNotEmpty) {
         debugPrint('SCAN_INVOICE source=local_ocr');
         await _recordLastScanModel(effectiveModel);
         return ScanResult.success(
@@ -640,46 +673,88 @@ $hints
         );
       }
 
-      if (!fastMode &&
-          (patchedData.invoiceNumber == null ||
-              patchedData.invoiceNumber!.trim().isEmpty)) {
-        debugPrint('SCAN_INVOICE fallback_call=enabled');
-        final fallbackInvoiceNumber = await _extractInvoiceNumberFallback(
-          apiKey: settings.apiKey,
-          modelName: effectiveModel,
-          imageBytes: imageBytes,
-        );
-        if (fallbackInvoiceNumber != null && fallbackInvoiceNumber.isNotEmpty) {
-          debugPrint('SCAN_INVOICE source=fallback_model');
-          await _recordLastScanModel(effectiveModel);
-          return ScanResult.success(
-            patchedData.copyWith(invoiceNumber: fallbackInvoiceNumber),
+      if (!fastMode) {
+        var invoiceMissing = patchedData.invoiceNumber == null ||
+            patchedData.invoiceNumber!.trim().isEmpty;
+        var rescueNeeded = _needsLowQualityRescue(patchedData);
+
+        if (ocrSnapshotFuture != null && (invoiceMissing || rescueNeeded)) {
+          await ensureOcrPrepared();
+        }
+        invoiceMissing = patchedData.invoiceNumber == null ||
+            patchedData.invoiceNumber!.trim().isEmpty;
+        rescueNeeded = _needsLowQualityRescue(patchedData);
+
+        if (invoiceMissing || rescueNeeded) {
+          final shouldRunInvoiceFallback = invoiceMissing &&
+              (localOcrInvoiceNumber == null ||
+                  localOcrInvoiceNumber!.trim().isEmpty);
+          debugPrint(
+            'SCAN_PARALLEL invoiceFallback=$shouldRunInvoiceFallback rescue=$rescueNeeded',
           );
+
+          final invoiceFuture = shouldRunInvoiceFallback
+              ? _extractInvoiceNumberFallback(
+                  apiKey: settings.apiKey,
+                  modelName: effectiveModel,
+                  imageBytes: aiImageBytes,
+                  imageMimeType: aiMimeType,
+                  timeoutSeconds: 12,
+                )
+              : Future<String?>.value(null);
+
+          final rescueFuture = rescueNeeded
+              ? _rescueLowQualityExtraction(
+                  apiKey: settings.apiKey,
+                  modelName: effectiveModel,
+                  imageBytes: aiImageBytes,
+                  imageMimeType: aiMimeType,
+                  categories: categories,
+                  ocrText: ocrText,
+                  businessNature: businessNature,
+                  businessDescription: businessDescription,
+                )
+              : Future<ReceiptData?>.value(null);
+
+          final fallbackStopwatch = Stopwatch()..start();
+          final parallelResults = await Future.wait<Object?>([
+            invoiceFuture,
+            rescueFuture,
+          ]);
+          fallbackStopwatch.stop();
+          debugPrint(
+            'SCAN_TIMING fallback_rescue_ms=${fallbackStopwatch.elapsedMilliseconds}',
+          );
+          final fallbackInvoiceNumber = parallelResults[0] as String?;
+          final rescue = parallelResults[1] as ReceiptData?;
+
+          if (fallbackInvoiceNumber != null &&
+              fallbackInvoiceNumber.isNotEmpty) {
+            debugPrint('SCAN_INVOICE source=fallback_model');
+            patchedData =
+                patchedData.copyWith(invoiceNumber: fallbackInvoiceNumber);
+          } else {
+            debugPrint('SCAN_INVOICE source=fallback_model_none');
+          }
+
+          if (rescue != null) {
+            debugPrint('SCAN_RESCUE merged=true');
+            patchedData = _mergePrimaryWithRescue(patchedData, rescue);
+          } else {
+            debugPrint('SCAN_RESCUE merged=false');
+          }
+        } else {
+          debugPrint('SCAN_INVOICE fallback_call=skipped');
+          debugPrint('SCAN_RESCUE skipped');
         }
       } else {
         debugPrint('SCAN_INVOICE fallback_call=skipped fastMode=$fastMode');
-      }
-
-      if (!fastMode && _needsLowQualityRescue(patchedData)) {
-        debugPrint('SCAN_RESCUE enabled');
-        final rescue = await _rescueLowQualityExtraction(
-          apiKey: settings.apiKey,
-          modelName: effectiveModel,
-          imageBytes: imageBytes,
-          categories: categories,
-          ocrText: ocrText,
-          businessNature: businessNature,
-          businessDescription: businessDescription,
-        );
-        if (rescue != null) {
-          debugPrint('SCAN_RESCUE merged=true');
-          patchedData = _mergePrimaryWithRescue(patchedData, rescue);
-        }
-      } else {
         debugPrint('SCAN_RESCUE skipped fastMode=$fastMode');
       }
 
       debugPrint('SCAN_RESULT success');
+      totalStopwatch.stop();
+      debugPrint('SCAN_TIMING total_ms=${totalStopwatch.elapsedMilliseconds}');
       await _recordLastScanModel(effectiveModel);
       return ScanResult.success(patchedData);
     } on TimeoutException catch (e) {
@@ -938,6 +1013,8 @@ $hints
     required String apiKey,
     required String modelName,
     required Uint8List imageBytes,
+    String imageMimeType = 'image/jpeg',
+    int timeoutSeconds = 18,
   }) async {
     try {
       final model = GenerativeModel(
@@ -1282,19 +1359,11 @@ Rules:
   }
 
   static bool _needsLowQualityRescue(ReceiptData data) {
-    final missingInvoice =
-        data.invoiceNumber == null || data.invoiceNumber!.trim().isEmpty;
     final missingDate = data.date == null;
     final missingSupplier =
         data.supplier == null || data.supplier!.trim().isEmpty;
     final missingGross = data.gross == null || data.gross! <= 0;
-    final missingCategory =
-        data.category == null || data.category!.trim().isEmpty;
-    return missingInvoice ||
-        missingDate ||
-        missingSupplier ||
-        missingGross ||
-        missingCategory;
+    return missingDate || missingSupplier || missingGross;
   }
 
   static ReceiptData _mergePrimaryWithRescue(
@@ -1334,6 +1403,7 @@ Rules:
     required String apiKey,
     required String modelName,
     required Uint8List imageBytes,
+    String imageMimeType = 'image/jpeg',
     required List<String> categories,
     String? ocrText,
     String? businessNature,
@@ -1389,7 +1459,7 @@ $ocrHint
       final response = await model.generateContent([
         Content.multi([
           TextPart(prompt),
-          DataPart('image/jpeg', imageBytes),
+          DataPart(imageMimeType, imageBytes),
         ]),
       ]).timeout(const Duration(seconds: 18));
 
@@ -1400,6 +1470,47 @@ $ocrHint
       return parsed.data;
     } catch (_) {
       return null;
+    }
+  }
+
+  static Future<({Uint8List bytes, String mimeType})>
+      _prepareAiImagePayloadForQuality(
+    Uint8List originalBytes,
+  ) async {
+    const maxWidth = 2200;
+    try {
+      final buffer = await ui.ImmutableBuffer.fromUint8List(originalBytes);
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= maxWidth) {
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      const targetWidth = maxWidth;
+      final targetHeight = (height * targetWidth / width).round();
+      final codec = await descriptor.instantiateCodec(
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+      );
+      final frame = await codec.getNextFrame();
+      final byteData =
+          await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      final resized = byteData.buffer.asUint8List();
+      if (resized.length >= originalBytes.length) {
+        debugPrint(
+          'SCAN_IMAGE downscaled=false reason=larger_payload src_bytes=${originalBytes.length} out_bytes=${resized.length}',
+        );
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      debugPrint(
+        'SCAN_IMAGE downscaled=true source=${width}x$height target=${targetWidth}x$targetHeight src_bytes=${originalBytes.length} out_bytes=${resized.length}',
+      );
+      return (bytes: resized, mimeType: 'image/png');
+    } catch (_) {
+      return (bytes: originalBytes, mimeType: 'image/jpeg');
     }
   }
 }
