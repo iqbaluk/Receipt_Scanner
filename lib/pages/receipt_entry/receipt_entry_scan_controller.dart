@@ -1,7 +1,8 @@
 part of '../../main.dart';
 
 extension _ReceiptEntryScanController on _ReceiptEntryPageState {
-  Future<void> _scanWithGemini() async {
+  Future<void> _scanWithGeminiMode(String scanMode) async {
+    debugPrint('SCAN_BUTTON mode=$scanMode');
     if (_imageBytes == null) {
       _showStatus(
         'Please add a photo first using Take Photo or Gallery.',
@@ -50,16 +51,25 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
       if (choice == 'merge') mergeOnly = true;
     }
 
+    _setActiveScanMode(scanMode);
     _setScanningState(true);
-    final result = await GeminiService.scanReceipt(
-      _imageBytes!,
-      allowedCategories: _categories,
-      imagePath: _imageFilePath,
-      businessNature: businessNature,
-      businessDescription: businessDescription,
-    );
+    ScanResult result;
+    try {
+      result = await GeminiService.scanReceipt(
+        _imageBytes!,
+        allowedCategories: _categories,
+        imagePath: _imageFilePath,
+        businessNature: businessNature,
+        businessDescription: businessDescription,
+        scanModeOverride: scanMode,
+      );
+    } finally {
+      if (mounted) {
+        _setScanningState(false);
+        _setActiveScanMode(null);
+      }
+    }
     if (!mounted) return;
-    _setScanningState(false);
 
     if (!result.success) {
       _showStatus(
@@ -257,7 +267,8 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
 
     final loose = cleaned.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
     for (final category in _categories) {
-      final candidate = category.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+      final candidate =
+          category.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
       if (candidate == loose) return category;
     }
     return null;

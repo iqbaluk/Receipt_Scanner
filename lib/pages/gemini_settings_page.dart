@@ -11,6 +11,7 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
   late List<String> _modelOptions;
+  String _scanMode = GeminiService.scanModeFast;
   bool _loading = true;
   bool _saving = false;
   bool _testing = false;
@@ -46,6 +47,7 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
       _modelOptions = List<String>.from(savedOptions);
       _apiKeyController.text = savedKey ?? '';
       _modelController.text = settings.model;
+      _scanMode = settings.scanMode;
       if (settings.model.trim().isNotEmpty &&
           !_modelOptions.contains(settings.model.trim())) {
         _modelOptions.add(settings.model.trim());
@@ -62,6 +64,7 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
       await GeminiService.saveSettings(
         apiKey: _apiKeyController.text,
         model: _modelController.text,
+        scanMode: _scanMode,
       );
       await GeminiService.saveModelOptions(_modelOptions);
       if (!mounted) return;

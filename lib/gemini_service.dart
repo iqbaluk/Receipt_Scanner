@@ -7,7 +7,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -94,12 +94,14 @@ class ReceiptData {
 class GeminiSettings {
   final String apiKey;
   final String model;
+  final String scanMode;
   final bool hasSavedApiKey;
   final bool usesEnvKey;
 
   const GeminiSettings({
     required this.apiKey,
     required this.model,
+    required this.scanMode,
     required this.hasSavedApiKey,
     required this.usesEnvKey,
   });
@@ -144,8 +146,11 @@ class GeminiService {
   ];
   static const _apiKeyStorageKey = 'gemini_api_key';
   static const _modelStorageKey = 'gemini_model';
+  static const _scanModeStorageKey = 'gemini_scan_mode';
   static const _modelOptionsStorageKey = 'gemini_model_options_json';
   static const _lastScanModelStorageKey = 'gemini_last_scan_model';
+  static const String scanModeFast = 'fast';
+  static const String scanModeAccurate = 'accurate';
   static const FlutterSecureStorage _storage = FlutterSecureStorage();
   static const bool strictPrivacyGuard = true;
   static final RegExp _emailRegex = RegExp(
@@ -198,6 +203,17 @@ class GeminiService {
       return model.isEmpty ? defaultModel : model;
     } catch (_) {
       return defaultModel;
+    }
+  }
+
+  static Future<String> savedScanMode() async {
+    try {
+      final mode =
+          (await _storage.read(key: _scanModeStorageKey))?.trim() ?? '';
+      if (mode == scanModeAccurate) return scanModeAccurate;
+      return scanModeFast;
+    } catch (_) {
+      return scanModeFast;
     }
   }
 
@@ -266,10 +282,12 @@ class GeminiService {
   static Future<GeminiSettings> loadSettings() async {
     final storedKey = await savedApiKey();
     final model = await savedModel();
+    final scanMode = await savedScanMode();
     if (storedKey != null && isUsableApiKey(storedKey)) {
       return GeminiSettings(
         apiKey: storedKey,
         model: model,
+        scanMode: scanMode,
         hasSavedApiKey: true,
         usesEnvKey: false,
       );
@@ -279,6 +297,7 @@ class GeminiService {
     return GeminiSettings(
       apiKey: envKey,
       model: model,
+      scanMode: scanMode,
       hasSavedApiKey: false,
       usesEnvKey: isUsableApiKey(envKey),
     );
@@ -287,6 +306,7 @@ class GeminiService {
   static Future<void> saveSettings({
     required String apiKey,
     required String model,
+    String? scanMode,
   }) async {
     final trimmedKey = apiKey.trim();
     final trimmedModel = model.trim().isEmpty ? defaultModel : model.trim();
@@ -299,11 +319,15 @@ class GeminiService {
       await _storage.write(key: _apiKeyStorageKey, value: trimmedKey);
     }
     await _storage.write(key: _modelStorageKey, value: trimmedModel);
+    final normalizedMode =
+        scanMode == scanModeAccurate ? scanModeAccurate : scanModeFast;
+    await _storage.write(key: _scanModeStorageKey, value: normalizedMode);
   }
 
   static Future<void> resetSettings() async {
     await _storage.delete(key: _apiKeyStorageKey);
     await _storage.delete(key: _modelStorageKey);
+    await _storage.delete(key: _scanModeStorageKey);
   }
 
   static Future<ScanResult> testSettings({
@@ -409,9 +433,18 @@ class GeminiService {
     String? imagePath,
     String? businessNature,
     String? businessDescription,
+    String? scanModeOverride,
   }) async {
     // ---- Pre-flight checks ----
     final settings = await loadSettings();
+    final mode = (scanModeOverride?.trim().isNotEmpty ?? false)
+        ? scanModeOverride!.trim()
+        : settings.scanMode;
+    final fastMode = mode == scanModeFast;
+    final effectiveModel = fastMode ? 'gemini-3.5-flash' : settings.model;
+    debugPrint(
+      'SCAN_START mode=$mode fastMode=$fastMode model=$effectiveModel imageBytes=${imageBytes.length}',
+    );
     if (!settings.hasUsableKey) {
       return ScanResult.failure(
         'Gemini API key not set. Open Operation actions > Gemini settings.',
@@ -442,7 +475,8 @@ class GeminiService {
       String? ocrText;
       String? ocrTopRightText;
       String? localOcrInvoiceNumber;
-      if (imagePath != null && imagePath.trim().isNotEmpty) {
+      if (!fastMode && imagePath != null && imagePath.trim().isNotEmpty) {
+        debugPrint('SCAN_PATH local_ocr=enabled imagePath=true');
         final ocrSnapshot =
             await _extractOcrSnapshotFromImagePath(imagePath.trim());
         ocrText = ocrSnapshot?.fullText;
@@ -468,11 +502,13 @@ class GeminiService {
             ocrText.trim().isNotEmpty) {
           localOcrInvoiceNumber = _extractInvoiceNumberFromOcrText(ocrText);
         }
+      } else {
+        debugPrint('SCAN_PATH local_ocr=skipped fastMode=$fastMode');
       }
 
       // ---- Build the model ----
       final model = GenerativeModel(
-        model: settings.model,
+        model: effectiveModel,
         apiKey: settings.apiKey,
         generationConfig: GenerationConfig(
           temperature: 0.1, // Low temp = more consistent extraction
@@ -552,20 +588,24 @@ $hints
           DataPart('image/jpeg', imageBytes),
         ]),
       ]).timeout(
-        const Duration(seconds: 25),
+        Duration(seconds: fastMode ? 20 : 25),
         onTimeout: () => throw TimeoutException(
-          'Gemini took too long to respond (>25s)',
+          fastMode
+              ? 'Gemini took too long to respond (>20s)'
+              : 'Gemini took too long to respond (>25s)',
         ),
       );
 
       // ---- Parse the response ----
       final text = response.text;
       if (text == null || text.trim().isEmpty) {
+        debugPrint('SCAN_RESULT empty_response');
         return ScanResult.failure('Gemini returned an empty response.');
       }
 
       final parsed = _parseJsonResponse(text, categories);
       if (!parsed.success || parsed.data == null) {
+        debugPrint('SCAN_RESULT parse_failed');
         return parsed;
       }
 
@@ -593,31 +633,38 @@ $hints
               parsed.data!.invoiceNumber!.trim().isEmpty) &&
           localOcrInvoiceNumber != null &&
           localOcrInvoiceNumber.trim().isNotEmpty) {
-        await _recordLastScanModel(settings.model);
+        debugPrint('SCAN_INVOICE source=local_ocr');
+        await _recordLastScanModel(effectiveModel);
         return ScanResult.success(
           patchedData.copyWith(invoiceNumber: localOcrInvoiceNumber),
         );
       }
 
-      if (patchedData.invoiceNumber == null ||
-          patchedData.invoiceNumber!.trim().isEmpty) {
+      if (!fastMode &&
+          (patchedData.invoiceNumber == null ||
+              patchedData.invoiceNumber!.trim().isEmpty)) {
+        debugPrint('SCAN_INVOICE fallback_call=enabled');
         final fallbackInvoiceNumber = await _extractInvoiceNumberFallback(
           apiKey: settings.apiKey,
-          modelName: settings.model,
+          modelName: effectiveModel,
           imageBytes: imageBytes,
         );
         if (fallbackInvoiceNumber != null && fallbackInvoiceNumber.isNotEmpty) {
-          await _recordLastScanModel(settings.model);
+          debugPrint('SCAN_INVOICE source=fallback_model');
+          await _recordLastScanModel(effectiveModel);
           return ScanResult.success(
             patchedData.copyWith(invoiceNumber: fallbackInvoiceNumber),
           );
         }
+      } else {
+        debugPrint('SCAN_INVOICE fallback_call=skipped fastMode=$fastMode');
       }
 
-      if (_needsLowQualityRescue(patchedData)) {
+      if (!fastMode && _needsLowQualityRescue(patchedData)) {
+        debugPrint('SCAN_RESCUE enabled');
         final rescue = await _rescueLowQualityExtraction(
           apiKey: settings.apiKey,
-          modelName: settings.model,
+          modelName: effectiveModel,
           imageBytes: imageBytes,
           categories: categories,
           ocrText: ocrText,
@@ -625,18 +672,25 @@ $hints
           businessDescription: businessDescription,
         );
         if (rescue != null) {
+          debugPrint('SCAN_RESCUE merged=true');
           patchedData = _mergePrimaryWithRescue(patchedData, rescue);
         }
+      } else {
+        debugPrint('SCAN_RESCUE skipped fastMode=$fastMode');
       }
 
-      await _recordLastScanModel(settings.model);
+      debugPrint('SCAN_RESULT success');
+      await _recordLastScanModel(effectiveModel);
       return ScanResult.success(patchedData);
     } on TimeoutException catch (e) {
+      debugPrint('SCAN_RESULT timeout ${e.message}');
       return ScanResult.failure('Timeout: ${e.message}');
     } on Exception catch (e) {
+      debugPrint('SCAN_RESULT exception ${e.toString()}');
       // Catch all other exceptions (network, API, parsing, etc.)
       return ScanResult.failure('Scan failed: ${e.toString()}');
     } catch (e) {
+      debugPrint('SCAN_RESULT unexpected ${e.toString()}');
       // Final safety net - even non-Exception throwables
       return ScanResult.failure('Unexpected error: ${e.toString()}');
     }
@@ -651,6 +705,13 @@ $hints
       if (cleaned.startsWith('```')) {
         cleaned = cleaned.replaceAll(RegExp(r'^```(?:json)?\s*'), '');
         cleaned = cleaned.replaceAll(RegExp(r'\s*```$'), '');
+      }
+      cleaned = _normalizeJsonCandidate(cleaned);
+      if (!cleaned.trimLeft().startsWith('{')) {
+        final extracted = _extractFirstJsonObject(cleaned);
+        if (extracted != null) {
+          cleaned = extracted;
+        }
       }
 
       final json = jsonDecode(cleaned) as Map<String, dynamic>;
@@ -686,8 +747,12 @@ $hints
           invoiceNumber.trim().toUpperCase() == 'NOT_FOUND') {
         invoiceNumber = null;
       }
-      String? supplier = cleanNullableString(json['supplier']);
-      String? notes = cleanNullableString(json['notes']);
+      String? supplier = cleanNullableString(
+        json['supplier'] ?? json['vendor'] ?? json['supplier_name'],
+      );
+      String? notes = cleanNullableString(
+        json['notes'] ?? json['description'] ?? json['item_description'],
+      );
       final extractionWarnings = _parseWarnings(
         json['extraction_warnings'] ?? json['warnings'],
       );
@@ -722,8 +787,14 @@ $hints
       }
 
       // ---- Numbers ----
-      double? vat = parseLooseDouble(json['vat']);
-      double? gross = parseLooseDouble(json['gross']);
+      double? vat =
+          parseLooseDouble(json['vat'] ?? json['vat_amount'] ?? json['tax']);
+      double? gross = parseLooseDouble(
+        json['gross'] ??
+            json['total'] ??
+            json['total_amount'] ??
+            json['invoice_total'],
+      );
       double? paidAmount = parseLooseDouble(
         json['paid_amount'] ?? json['paidAmount'] ?? json['amount_paid'],
       );
@@ -758,10 +829,52 @@ $hints
         ),
       );
     } catch (e) {
+      debugPrint('SCAN_PARSE error=${e.toString()}');
       return ScanResult.failure(
         'Could not parse Gemini response: ${e.toString()}',
       );
     }
+  }
+
+  static String _normalizeJsonCandidate(String value) {
+    return value
+        .replaceAll('\u201c', '"')
+        .replaceAll('\u201d', '"')
+        .replaceAll('\u2018', "'")
+        .replaceAll('\u2019', "'");
+  }
+
+  static String? _extractFirstJsonObject(String value) {
+    final start = value.indexOf('{');
+    if (start < 0) return null;
+    var depth = 0;
+    var inQuotes = false;
+    var escaped = false;
+    for (var i = start; i < value.length; i++) {
+      final char = value[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char == '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char == '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (inQuotes) continue;
+      if (char == '{') {
+        depth++;
+      } else if (char == '}') {
+        depth--;
+        if (depth == 0) {
+          return value.substring(start, i + 1);
+        }
+      }
+    }
+    return null;
   }
 
   static String? _sanitizeInvoiceNumber(String? value) {
