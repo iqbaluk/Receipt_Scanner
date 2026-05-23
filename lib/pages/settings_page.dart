@@ -10,6 +10,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   Future<CompanyProfile?> _companyProfileFuture =
       DatabaseService.getCompanyProfile();
+  PhotoSaveSizeMode _photoSaveSizeMode = PhotoSaveSizeMode.balanced;
   static const List<String> _monthNames = <String>[
     'January',
     'February',
@@ -28,6 +29,18 @@ class _SettingsPageState extends State<SettingsPage> {
   String _monthLabel(int monthNumber) {
     final safeMonth = monthNumber.clamp(1, 12);
     return _monthNames[safeMonth - 1];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPhotoSaveMode();
+  }
+
+  Future<void> _loadPhotoSaveMode() async {
+    final mode = await AppPhotoSaveSettings.getMode();
+    if (!mounted) return;
+    setState(() => _photoSaveSizeMode = mode);
   }
 
   @override
@@ -188,6 +201,19 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _SettingsDivider(),
                 ListTile(
+                  leading: Icon(Icons.photo_size_select_large,
+                      color: colorScheme.primary),
+                  title: const Text('Photo save size'),
+                  subtitle: Text(
+                    _photoSaveSizeMode == PhotoSaveSizeMode.compact
+                        ? 'Compact (smaller file)'
+                        : 'Balanced (default)',
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => _pickPhotoSaveSize(context),
+                ),
+                _SettingsDivider(),
+                ListTile(
                   leading: Icon(Icons.info_outline,
                       color: colorScheme.onSurfaceVariant),
                   title: const Text('About'),
@@ -205,6 +231,59 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _pickPhotoSaveSize(BuildContext context) async {
+    final selected = await showModalBottomSheet<PhotoSaveSizeMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Photo save size',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: Icon(
+                  _photoSaveSizeMode == PhotoSaveSizeMode.balanced
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text('Balanced'),
+                subtitle: const Text('Good readability with smaller size'),
+                onTap: () => Navigator.pop(ctx, PhotoSaveSizeMode.balanced),
+              ),
+              ListTile(
+                leading: Icon(
+                  _photoSaveSizeMode == PhotoSaveSizeMode.compact
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text('Compact'),
+                subtitle: const Text('Smallest size, still readable'),
+                onTap: () => Navigator.pop(ctx, PhotoSaveSizeMode.compact),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected == null || selected == _photoSaveSizeMode) return;
+    await AppPhotoSaveSettings.setMode(selected);
+    if (!context.mounted) return;
+    setState(() => _photoSaveSizeMode = selected);
+    _showMessage(
+      context,
+      selected == PhotoSaveSizeMode.compact
+          ? 'Photo save size set to Compact.'
+          : 'Photo save size set to Balanced.',
     );
   }
 

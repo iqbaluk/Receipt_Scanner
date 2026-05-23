@@ -18,6 +18,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -30,18 +31,17 @@ import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'export_service.dart';
 import 'gemini_service.dart';
-import 'scan/fast_receipt_pipeline.dart';
 import 'utils/ai_extraction_helpers.dart';
 import 'utils/text_normalizers.dart';
 
 part 'pages/splash_page.dart';
 part 'pages/project_list_page.dart';
 part 'pages/receipt_entry_page.dart';
+part 'pages/receipt_intake_page.dart';
 part 'pages/receipt_entry/receipt_entry_save_controller.dart';
 part 'pages/receipt_entry/receipt_entry_duplicate_dialogs.dart';
 part 'pages/receipt_entry/receipt_entry_scan_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_fast_controller.dart';
-part 'pages/receipt_entry/receipt_entry_scan_local_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_quality_controller.dart';
 part 'pages/receipt_entry/receipt_entry_view_sections.dart';
 part 'pages/category_manager_page.dart';
@@ -273,6 +273,39 @@ class ReceiptScannerApp extends StatelessWidget {
       ),
       home: const StartupSplashPage(),
     );
+  }
+}
+
+enum PhotoSaveSizeMode { balanced, compact }
+
+class AppPhotoSaveSettings {
+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  static const String _keyPhotoSaveSize = 'photo_save_size_mode';
+
+  static Future<PhotoSaveSizeMode> getMode() async {
+    final raw = await _storage.read(key: _keyPhotoSaveSize);
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'compact':
+        return PhotoSaveSizeMode.compact;
+      case 'balanced':
+      default:
+        return PhotoSaveSizeMode.balanced;
+    }
+  }
+
+  static Future<void> setMode(PhotoSaveSizeMode mode) async {
+    await _storage.write(
+      key: _keyPhotoSaveSize,
+      value: mode == PhotoSaveSizeMode.compact ? 'compact' : 'balanced',
+    );
+  }
+
+  static int imageQuality(PhotoSaveSizeMode mode) {
+    return mode == PhotoSaveSizeMode.compact ? 60 : 75;
+  }
+
+  static double maxWidth(PhotoSaveSizeMode mode) {
+    return mode == PhotoSaveSizeMode.compact ? 1400 : 1900;
   }
 }
 

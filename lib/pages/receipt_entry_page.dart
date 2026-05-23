@@ -2,8 +2,19 @@ part of '../main.dart';
 
 class ReceiptEntryPage extends StatefulWidget {
   final Project project;
+  final Uint8List? initialImageBytes;
+  final String? initialImageName;
+  final String? initialImagePath;
+  final Uint8List? initialFastScanBytes;
 
-  const ReceiptEntryPage({super.key, required this.project});
+  const ReceiptEntryPage({
+    super.key,
+    required this.project,
+    this.initialImageBytes,
+    this.initialImageName,
+    this.initialImagePath,
+    this.initialFastScanBytes,
+  });
 
   @override
   State<ReceiptEntryPage> createState() => _ReceiptEntryPageState();
@@ -23,6 +34,7 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
   final _notesController = TextEditingController();
 
   Uint8List? _imageBytes;
+  Uint8List? _fastScanBytes;
   String? _imageFileName;
   String? _imageFilePath;
 
@@ -46,11 +58,18 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
   @override
   void initState() {
     super.initState();
+    _imageBytes = widget.initialImageBytes;
+    _imageFileName = widget.initialImageName;
+    _imageFilePath = widget.initialImagePath;
+    _fastScanBytes = widget.initialFastScanBytes;
     _grossController.addListener(_syncAmountFields);
     _vatController.addListener(_syncAmountFields);
     _paidController.addListener(_syncAmountFields);
     _loadCategories();
     _loadRecent();
+    if (_imageBytes != null && _fastScanBytes == null) {
+      _prepareFastScanCache();
+    }
   }
 
   @override
@@ -224,10 +243,11 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
 
   Future<void> _takePhoto() async {
     try {
+      final mode = await AppPhotoSaveSettings.getMode();
       final XFile? photo = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 100,
-        maxWidth: 3200,
+        imageQuality: AppPhotoSaveSettings.imageQuality(mode),
+        maxWidth: AppPhotoSaveSettings.maxWidth(mode),
       );
       if (photo != null) await _setImage(photo);
     } catch (e) {
@@ -236,16 +256,7 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
   }
 
   Future<void> _pickFromGallery() async {
-    try {
-      final XFile? photo = await _picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 100,
-        maxWidth: 3200,
-      );
-      if (photo != null) await _setImage(photo);
-    } catch (e) {
-      _showStatus('Could not pick image: $e', isError: true);
-    }
+    await _openIntakePage();
   }
 
   Future<void> _setImage(XFile file) async {
@@ -255,14 +266,43 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       _imageFileName = file.name;
       _imageFilePath = file.path;
     });
-    _showStatus(
-      'Image loaded. You can scan with Gemini.',
-    );
+    _showStatus('Image loaded. You can scan with Gemini.');
+    _prepareFastScanCache();
+  }
+
+  Future<void> _openIntakePage() async {
+    try {
+      final selected = await Navigator.of(context).push<IntakeImageSelection>(
+        MaterialPageRoute(builder: (_) => const ReceiptIntakePage()),
+      );
+      if (!mounted || selected == null) return;
+      setState(() {
+        _imageBytes = selected.bytes;
+        _fastScanBytes = selected.fastScanBytes;
+        _imageFileName = selected.name;
+        _imageFilePath = selected.path;
+      });
+      _showStatus('Image loaded from intake. You can scan with Gemini.');
+      _prepareFastScanCache();
+    } catch (e) {
+      _showStatus('Could not open intake page: $e', isError: true);
+    }
+  }
+
+  Future<void> _prepareFastScanCache() async {
+    final source = _imageBytes;
+    if (source == null) return;
+    final prepared = await GeminiService.prepareFastScanPayload(source);
+    if (!mounted) return;
+    setState(() {
+      _fastScanBytes = prepared;
+    });
   }
 
   void _removeImage() {
     setState(() {
       _imageBytes = null;
+      _fastScanBytes = null;
       _imageFileName = null;
       _imageFilePath = null;
     });
@@ -417,6 +457,7 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       _categoryNeedsReview = false;
       _categoryReviewConfirmed = false;
       _imageBytes = null;
+      _fastScanBytes = null;
       _imageFileName = null;
     });
     if (!silent) _showStatus('Form cleared');
@@ -589,6 +630,11 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       appBar: AppBar(
         actions: [
           IconButton(
+            icon: const Icon(Icons.camera_alt_outlined),
+            tooltip: 'Intake',
+            onPressed: _isScanning ? null : _openIntakePage,
+          ),
+          IconButton(
             icon: const Icon(Icons.home_outlined),
             tooltip: 'Home',
             onPressed: () => goToHomePage(context),
@@ -755,33 +801,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: colorScheme.tertiaryContainer,
                           foregroundColor: colorScheme.onTertiaryContainer,
-                          disabledBackgroundColor:
-                              colorScheme.surfaceContainerHigh,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: (_imageBytes == null || _isScanning)
-                            ? null
-                            : _scanWithLocalOnly,
-                        icon: _isScanning && _activeScanMode == 'local'
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.offline_bolt),
-                        label: Text(
-                          _isScanning && _activeScanMode == 'local'
-                              ? 'Scanning...'
-                              : 'Local',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: colorScheme.primaryContainer,
-                          foregroundColor: colorScheme.onPrimaryContainer,
                           disabledBackgroundColor:
                               colorScheme.surfaceContainerHigh,
                         ),
