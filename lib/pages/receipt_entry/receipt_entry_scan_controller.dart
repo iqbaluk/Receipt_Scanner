@@ -55,14 +55,37 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
     _setScanningState(true);
     ScanResult result;
     try {
-      result = await GeminiService.scanReceipt(
-        _imageBytes!,
-        allowedCategories: _categories,
-        imagePath: _imageFilePath,
-        businessNature: businessNature,
-        businessDescription: businessDescription,
-        scanModeOverride: scanMode,
-      );
+      if (scanMode == GeminiService.scanModeFast &&
+          _imageFilePath != null &&
+          _imageFilePath!.trim().isNotEmpty) {
+        final localFastData = await FastReceiptPipeline.tryExtract(
+          imagePath: _imageFilePath!.trim(),
+          categories: _categories,
+        );
+        if (localFastData != null) {
+          debugPrint('FAST_LOCAL_PIPELINE success=true');
+          result = ScanResult.success(localFastData);
+        } else {
+          debugPrint('FAST_LOCAL_PIPELINE success=false fallback=gemini');
+          result = await GeminiService.scanReceipt(
+            _imageBytes!,
+            allowedCategories: _categories,
+            imagePath: _imageFilePath,
+            businessNature: businessNature,
+            businessDescription: businessDescription,
+            scanModeOverride: scanMode,
+          );
+        }
+      } else {
+        result = await GeminiService.scanReceipt(
+          _imageBytes!,
+          allowedCategories: _categories,
+          imagePath: _imageFilePath,
+          businessNature: businessNature,
+          businessDescription: businessDescription,
+          scanModeOverride: scanMode,
+        );
+      }
     } finally {
       if (mounted) {
         _setScanningState(false);

@@ -109,6 +109,71 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
     }
   }
 
+  Future<String?> _pickCategoryFromSheet(String? currentValue) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Select Expense Category',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Close'),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _categories.length,
+                  itemBuilder: (context, index) {
+                    final category = _categories[index];
+                    final selected = category == currentValue;
+                    return ListTile(
+                      dense: true,
+                      visualDensity: const VisualDensity(
+                        horizontal: 0,
+                        vertical: -2,
+                      ),
+                      title: Text(
+                        category,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight:
+                              selected ? FontWeight.w800 : FontWeight.w600,
+                        ),
+                      ),
+                      trailing:
+                          selected ? const Icon(Icons.check, size: 18) : null,
+                      onTap: () => Navigator.pop(ctx, category),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _syncAmountFields() {
     if (_isAutoAmountUpdate) return;
     final gross = double.tryParse(_grossController.text) ?? 0;
@@ -695,6 +760,33 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: (_imageBytes == null || _isScanning)
+                            ? null
+                            : _scanWithLocalOnly,
+                        icon: _isScanning && _activeScanMode == 'local'
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.offline_bolt),
+                        label: Text(
+                          _isScanning && _activeScanMode == 'local'
+                              ? 'Scanning...'
+                              : 'Local',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colorScheme.primaryContainer,
+                          foregroundColor: colorScheme.onPrimaryContainer,
+                          disabledBackgroundColor:
+                              colorScheme.surfaceContainerHigh,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -709,44 +801,47 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
                 ),
                 const SizedBox(height: 20),
                 _buildSectionHeader('2. Receipt Details'),
-                DropdownButtonFormField<String>(
+                FormField<String>(
                   initialValue: _selectedCategory,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    labelText: 'Expense category * (select before save)',
-                    labelStyle: TextStyle(
-                      color: colorScheme.secondary,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  style: TextStyle(
-                    color: colorScheme.secondary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                  ),
-                  items: _categories
-                      .map(
-                        (c) => DropdownMenuItem(
-                          value: c,
-                          child: Text(
-                            c,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colorScheme.secondary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) => setState(() {
-                    _selectedCategory = v;
-                    _categoryReviewConfirmed = true;
-                    _categoryNeedsReview = false;
-                  }),
                   validator: (v) =>
                       v == null ? 'Please select an expense category' : null,
+                  builder: (state) {
+                    return InkWell(
+                      onTap: () async {
+                        final selected =
+                            await _pickCategoryFromSheet(state.value);
+                        if (selected == null) return;
+                        if (!mounted) return;
+                        setState(() {
+                          _selectedCategory = selected;
+                          _categoryReviewConfirmed = true;
+                          _categoryNeedsReview = false;
+                        });
+                        state.didChange(selected);
+                      },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'Expense category * (select before save)',
+                          labelStyle: TextStyle(
+                            color: colorScheme.secondary,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          errorText: state.errorText,
+                          suffixIcon: const Icon(Icons.arrow_drop_down),
+                        ),
+                        child: Text(
+                          _selectedCategory ?? 'Tap to select',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colorScheme.secondary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 10),
                 MediaQuery(
