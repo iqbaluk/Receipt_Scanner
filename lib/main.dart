@@ -14,13 +14,13 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
+import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -306,6 +306,29 @@ class AppPhotoSaveSettings {
 
   static double maxWidth(PhotoSaveSizeMode mode) {
     return mode == PhotoSaveSizeMode.compact ? 1400 : 1900;
+  }
+}
+
+class DocumentCaptureService {
+  static Future<XFile?> captureCorrected({
+    required bool allowGalleryImport,
+  }) async {
+    final mode = await AppPhotoSaveSettings.getMode();
+    final quality = mode == PhotoSaveSizeMode.compact ? 0.60 : 0.75;
+
+    final paths = await CunningDocumentScanner.getPictures(
+      noOfPages: 1,
+      isGalleryImportAllowed: allowGalleryImport,
+      iosScannerOptions: IosScannerOptions(
+        imageFormat: IosImageFormat.jpg,
+        jpgCompressionQuality: quality,
+      ),
+    );
+
+    if (paths == null || paths.isEmpty) return null;
+    final first = paths.first.trim();
+    if (first.isEmpty) return null;
+    return XFile(first);
   }
 }
 

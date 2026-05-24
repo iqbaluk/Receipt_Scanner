@@ -24,7 +24,6 @@ class ReceiptIntakePage extends StatefulWidget {
 }
 
 class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
-  final ImagePicker _picker = ImagePicker();
   final List<IntakeImageSelection> _allItems = [];
   String? _selectedPath;
   bool _loading = false;
@@ -153,11 +152,8 @@ class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
   Future<void> _capture() async {
     try {
       setState(() => _loading = true);
-      final mode = await AppPhotoSaveSettings.getMode();
-      final photo = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: AppPhotoSaveSettings.imageQuality(mode),
-        maxWidth: AppPhotoSaveSettings.maxWidth(mode),
+      final photo = await DocumentCaptureService.captureCorrected(
+        allowGalleryImport: false,
       );
       if (photo == null) return;
       final bytes = await photo.readAsBytes();
@@ -187,25 +183,19 @@ class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
   Future<void> _import() async {
     try {
       setState(() => _loading = true);
-      final res = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        type: FileType.image,
-        withData: true,
+      final picked = await DocumentCaptureService.captureCorrected(
+        allowGalleryImport: true,
       );
-      if (res == null || res.files.isEmpty) return;
-
-      final loaded = <IntakeImageSelection>[];
-      for (final f in res.files) {
-        final path = f.path;
-        final bytes = f.bytes;
-        if (path == null || bytes == null || bytes.isEmpty) continue;
-
-        final savedPath = await _saveIntoIntake(
-          bytes: bytes,
-          originalName: f.name,
-        );
-
-        loaded.add(
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      final savedPath = await _saveIntoIntake(
+        bytes: bytes,
+        originalName: picked.name,
+      );
+      if (!mounted) return;
+      setState(() {
+        _allItems.insert(
+          0,
           IntakeImageSelection(
             bytes: bytes,
             fastScanBytes: null,
@@ -214,12 +204,7 @@ class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
             savedAt: DateTime.now(),
           ),
         );
-      }
-
-      if (!mounted || loaded.isEmpty) return;
-      setState(() {
-        _allItems.insertAll(0, loaded);
-        _selectedPath = loaded.first.path;
+        _selectedPath = savedPath;
       });
     } finally {
       if (mounted) setState(() => _loading = false);

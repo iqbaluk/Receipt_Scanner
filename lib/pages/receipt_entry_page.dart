@@ -49,8 +49,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
   String? _statusMessage;
   bool _statusIsError = false;
 
-  final ImagePicker _picker = ImagePicker();
-
   List<Receipt> _recentReceipts = [];
   List<String> _categories = DatabaseService.defaultCategories;
   int _totalReceiptCount = 0;
@@ -243,11 +241,8 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
 
   Future<void> _takePhoto() async {
     try {
-      final mode = await AppPhotoSaveSettings.getMode();
-      final XFile? photo = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: AppPhotoSaveSettings.imageQuality(mode),
-        maxWidth: AppPhotoSaveSettings.maxWidth(mode),
+      final XFile? photo = await DocumentCaptureService.captureCorrected(
+        allowGalleryImport: false,
       );
       if (photo != null) await _setImage(photo);
     } catch (e) {
