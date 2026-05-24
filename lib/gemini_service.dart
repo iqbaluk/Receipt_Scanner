@@ -129,12 +129,13 @@ class GeminiSettingsCheckResult {
 }
 
 class GeminiService {
-  static const String defaultModel = 'gemini-2.5-flash';
+  static const String defaultModel = 'gemini-2.5-flash-lite';
   static const List<String> selectableModels = [
     'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
     'gemini-3.1-flash-lite',
     'gemini-2.5-pro',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
     'gemini-1.5-pro',
     'gemini-1.5-flash',
@@ -142,6 +143,7 @@ class GeminiService {
   static const List<String> fallbackModels = [
     'gemini-3.5-flash',
     'gemini-3.1-flash-lite',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
     'gemini-1.5-flash',
   ];
@@ -435,6 +437,7 @@ class GeminiService {
     String? businessNature,
     String? businessDescription,
     String? scanModeOverride,
+    Uint8List? fastPreparedBytes,
   }) async {
     // ---- Pre-flight checks ----
     final settings = await loadSettings();
@@ -442,7 +445,9 @@ class GeminiService {
         ? scanModeOverride!.trim()
         : settings.scanMode;
     final fastMode = mode == scanModeFast;
-    final effectiveModel = fastMode ? 'gemini-3.5-flash' : settings.model;
+    // Use the selected settings model for both scan modes.
+    // Default remains gemini-2.5-flash unless user changes it.
+    final effectiveModel = settings.model;
     debugPrint(
       'SCAN_START mode=$mode fastMode=$fastMode model=$effectiveModel imageBytes=${imageBytes.length}',
     );
@@ -474,6 +479,7 @@ class GeminiService {
 
     try {
       final totalStopwatch = Stopwatch()..start();
+      var apiCalls = 0;
       String? ocrText;
       String? ocrTopRightText;
       String? localOcrInvoiceNumber;
@@ -514,11 +520,42 @@ class GeminiService {
         }
       }
 
-      if (!fastMode && imagePath != null && imagePath.trim().isNotEmpty) {
+      if (fastMode) {
+        if (imagePath != null && imagePath.trim().isNotEmpty) {
+          // Keep Fast cheap: only use OCR later for numeric paid_amount fallback
+          // when Gemini misses it. OCR starts in parallel to avoid added wait.
+          ocrSnapshotFuture =
+              _extractOcrSnapshotFromImagePath(imagePath.trim());
+          debugPrint(
+              'SCAN_PATH local_ocr=prepared_for_paid_fallback fastMode=true');
+        }
+        if (fastPreparedBytes != null && fastPreparedBytes.isNotEmpty) {
+          aiImageBytes = fastPreparedBytes;
+          aiMimeType = 'image/jpeg';
+          debugPrint('SCAN_TIMING image_prep_ms=0 source=cached');
+        } else {
+          final imagePrepStopwatch = Stopwatch()..start();
+          final prepared = await _prepareAiImagePayloadForFast(imageBytes);
+          imagePrepStopwatch.stop();
+          debugPrint(
+            'SCAN_TIMING image_prep_ms=${imagePrepStopwatch.elapsedMilliseconds}',
+          );
+          aiImageBytes = prepared.bytes;
+          aiMimeType = prepared.mimeType;
+        }
+        debugPrint(
+          'SCAN_PATH fastMode=true payload_bytes=${aiImageBytes.length} ocr_fallback=${ocrSnapshotFuture != null}',
+        );
+      } else if (imagePath != null && imagePath.trim().isNotEmpty) {
         debugPrint('SCAN_PATH local_ocr=enabled imagePath=true');
         // Start OCR in parallel with Gemini call to reduce end-to-end latency.
         ocrSnapshotFuture = _extractOcrSnapshotFromImagePath(imagePath.trim());
+        final imagePrepStopwatch = Stopwatch()..start();
         final prepared = await _prepareAiImagePayloadForQuality(imageBytes);
+        imagePrepStopwatch.stop();
+        debugPrint(
+          'SCAN_TIMING image_prep_ms=${imagePrepStopwatch.elapsedMilliseconds}',
+        );
         aiImageBytes = prepared.bytes;
         aiMimeType = prepared.mimeType;
       } else {
@@ -547,7 +584,7 @@ class GeminiService {
         businessNature?.trim() ?? '',
         businessDescription?.trim() ?? '',
       ].where((v) => v.isNotEmpty).join(' | ');
-      final prompt = '''
+      final fullPrompt = '''
 You are extracting structured data from a receipt or invoice image for a UK business.
 ${businessContextLine.isEmpty ? '' : 'Business profile context: $businessContextLine'}
 
@@ -562,7 +599,7 @@ Extract the following fields and return them as a JSON object with this EXACT sc
   "gross": "total gross amount as number or null",
   "paid_amount": "amount actually paid (TOTAL TO PAY/card/cash), number or null",
   "net": "net amount as number or null",
-  "notes": "brief 1-line description of items if helpful, or null",
+  "notes": "short summary of line items (comma-separated) or null",
   "extraction_warnings": "array of short warning strings, [] if none"
 }
 
@@ -580,14 +617,17 @@ Rules:
 - Currency symbols (GBP, pound) should be stripped from numbers
 - VAT in UK is usually 20% - if you see VAT separately listed, use that exact figure
 - If both invoice total and payment total appear, map invoice total to gross and amount paid to paid_amount
-- Typical payment labels: TOTAL TO PAY, AMOUNT PAID, CARD PAYMENT, CASH PAYMENT, VISA/MASTERCARD amount
+- Typical payment labels: TOTAL TO PAY, AMOUNT PAID, PAID, CARD PAYMENT, CASH PAYMENT, VISA/MASTERCARD amount
+- Handwritten payment labels may appear as: paid, pd, payd, amt paid, paid cash, paid card. Use them if clearly legible.
 - Net must represent the invoice net amount (before VAT): net = gross - vat.
 - Do NOT set net from paid_amount. paid_amount can be partial and is separate from invoice net/gross.
 - Allowed categories (choose exactly one if reasonably clear): ${categories.join(', ')}
 - Category confidence must be 0-100 where 100 = very certain.
 - Do NOT include personal client data in output fields: person names, home/work addresses, email addresses, or telephone numbers.
 - If personal data appears, return null for that field instead of outputting it.
-- Keep notes strictly item/description text only. If notes include personal data, return null.
+- Notes must be a short summary of purchased line items only (example: "milk, bread, eggs"), not supplier/date/payment text.
+- If no line items are visible, set notes = null.
+- If notes include personal data, return null.
 - Category must use business profile context when classifying ambiguous items.
 $examples
 $hints
@@ -599,20 +639,22 @@ $hints
 - If invoice number cannot be extracted with high confidence, set invoice_number to null and include "Invoice number not detected" in extraction_warnings.
 - Return ONLY the JSON object, no commentary, no markdown fences
 ''';
+      final prompt = fastMode ? _buildFastPrompt() : fullPrompt;
 
       // ---- Send the image with a timeout ----
       final primaryStopwatch = Stopwatch()..start();
+      apiCalls++;
       final response = await model.generateContent([
         Content.multi([
           TextPart(prompt),
           DataPart(aiMimeType, aiImageBytes),
         ]),
       ]).timeout(
-        Duration(seconds: fastMode ? 20 : 45),
+        Duration(seconds: fastMode ? 15 : 25),
         onTimeout: () => throw TimeoutException(
           fastMode
-              ? 'Gemini took too long to respond (>20s)'
-              : 'Gemini took too long to respond (>45s)',
+              ? 'Gemini took too long to respond (>15s)'
+              : 'Gemini took too long to respond (>25s)',
         ),
       );
       primaryStopwatch.stop();
@@ -634,6 +676,25 @@ $hints
       }
 
       var patchedData = parsed.data!;
+      if (fastMode && _isFastResultTooSparse(patchedData)) {
+        debugPrint('FAST_RETRY triggered=true');
+        final retryStopwatch = Stopwatch()..start();
+        final retry = await _runFastRetry(
+          model: model,
+          categories: categories,
+          aiMimeType: aiMimeType,
+          aiImageBytes: aiImageBytes,
+        );
+        retryStopwatch.stop();
+        debugPrint(
+            'FAST_TIMING retry_ms=${retryStopwatch.elapsedMilliseconds}');
+        if (retry != null) {
+          apiCalls++;
+          patchedData = retry;
+        }
+      } else if (fastMode) {
+        debugPrint('FAST_RETRY triggered=false');
+      }
 
       // Use local OCR text for numeric fallback only when AI misses paid amount.
       if ((patchedData.paidAmount == null || patchedData.paidAmount! <= 0) &&
@@ -702,6 +763,7 @@ $hints
                   timeoutSeconds: 12,
                 )
               : Future<String?>.value(null);
+          if (shouldRunInvoiceFallback) apiCalls++;
 
           final rescueFuture = rescueNeeded
               ? _rescueLowQualityExtraction(
@@ -715,6 +777,7 @@ $hints
                   businessDescription: businessDescription,
                 )
               : Future<ReceiptData?>.value(null);
+          if (rescueNeeded) apiCalls++;
 
           final fallbackStopwatch = Stopwatch()..start();
           final parallelResults = await Future.wait<Object?>([
@@ -754,7 +817,13 @@ $hints
 
       debugPrint('SCAN_RESULT success');
       totalStopwatch.stop();
+      debugPrint(
+          'SCAN_API_CALLS count=$apiCalls mode=$mode model=$effectiveModel');
       debugPrint('SCAN_TIMING total_ms=${totalStopwatch.elapsedMilliseconds}');
+      if (fastMode) {
+        debugPrint(
+            'FAST_TIMING total_ms=${totalStopwatch.elapsedMilliseconds}');
+      }
       await _recordLastScanModel(effectiveModel);
       return ScanResult.success(patchedData);
     } on TimeoutException catch (e) {
@@ -769,6 +838,12 @@ $hints
       // Final safety net - even non-Exception throwables
       return ScanResult.failure('Unexpected error: ${e.toString()}');
     }
+  }
+
+  static Future<Uint8List> prepareFastScanPayload(
+      Uint8List originalBytes) async {
+    final prepared = await _prepareAiImagePayloadForFast(originalBytes);
+    return prepared.bytes;
   }
 
   /// Parse the JSON Gemini sent us into a ReceiptData object.
@@ -1045,7 +1120,7 @@ Rules:
           ),
           DataPart('image/jpeg', imageBytes),
         ]),
-      ]).timeout(const Duration(seconds: 18));
+      ]).timeout(Duration(seconds: timeoutSeconds));
 
       final raw = response.text?.trim() ?? '';
       if (raw.isEmpty) return null;
@@ -1283,19 +1358,66 @@ Rules:
 
   static double? _extractPaidAmountByRegex(String text) {
     final normalized = text.replaceAll('\n', ' ');
-    final paidRegex = RegExp(
-      r'(?:total\s*to\s*pay|amount\s*paid|paid|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
+    final candidateRegex = RegExp(
+      r'(?:total\s*to\s*pay|amount\s*paid|amt\s*paid|paid|pd|payd|pald|paymt|paid\s*cash|paid\s*card|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
-    final match = paidRegex.firstMatch(normalized);
-    if (match == null) return null;
-    return double.tryParse(match.group(1)!);
+
+    final matches = candidateRegex.allMatches(normalized).toList();
+    if (matches.isEmpty) return null;
+
+    double? bestAmount;
+    var bestScore = -1;
+
+    for (final m in matches) {
+      final amount = double.tryParse(m.group(1) ?? '');
+      if (amount == null || amount <= 0) continue;
+
+      final start = m.start;
+      final end = m.end;
+      final left = normalized.substring(start > 40 ? start - 40 : 0, start);
+      final right = normalized.substring(
+          end, (end + 40) < normalized.length ? end + 40 : normalized.length);
+      final around = '$left ${m.group(0) ?? ''} $right'.toLowerCase();
+
+      // Ignore memo-style phrases that are not payment amount labels.
+      if (RegExp(r'\bpaid\s+(?:to|by|for)\b').hasMatch(around)) {
+        continue;
+      }
+
+      var score = 0;
+      if (RegExp(r'total\s*to\s*pay|amount\s*paid|amt\s*paid')
+          .hasMatch(around)) {
+        score += 4;
+      }
+      if (RegExp(r'paid\s*cash|paid\s*card|card\s*payment|cash\s*payment')
+          .hasMatch(around)) {
+        score += 3;
+      }
+      if (RegExp(r'visa\s*debit\s*sale|mastercard').hasMatch(around)) {
+        score += 2;
+      }
+      if (RegExp(
+              r'\b(total|vat|balance\s*due|amount\s*due|invoice\s*value|gross)\b')
+          .hasMatch(around)) {
+        score += 1;
+      }
+
+      // Tie-breaker: prefer larger plausible paid amount in ambiguous cases.
+      if (score > bestScore ||
+          (score == bestScore && (bestAmount == null || amount > bestAmount))) {
+        bestScore = score;
+        bestAmount = amount;
+      }
+    }
+
+    return bestAmount;
   }
 
   static double? _extractBalanceDueByRegex(String text) {
     final normalized = text.replaceAll('\n', ' ');
     final dueRegex = RegExp(
-      r'(?:balance\s*due|amount\s*due|outstanding)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
+      r'(?:balance\s*due|amount\s*due|outstanding)\s*[:#-]?\s*(?:gbp|Â£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
     final match = dueRegex.firstMatch(normalized);
@@ -1452,6 +1574,8 @@ Rules:
 - If unclear, return null for field.
 - Allowed categories: ${categories.join(', ')}.
 - Use invoice labels and nearby totals to infer values.
+- For paid_amount, also use handwritten labels if legible: paid, pd, payd, amt paid, paid cash, paid card.
+- Notes must be short summary of line items only; do not include supplier/date/payment text.
 - Add warning "Low image quality" if text appears blurry/uncertain.
 $ocrHint
 ''';
@@ -1511,6 +1635,96 @@ $ocrHint
       return (bytes: resized, mimeType: 'image/png');
     } catch (_) {
       return (bytes: originalBytes, mimeType: 'image/jpeg');
+    }
+  }
+
+  static Future<({Uint8List bytes, String mimeType})>
+      _prepareAiImagePayloadForFast(
+    Uint8List originalBytes,
+  ) async {
+    const maxWidth = 1600;
+    try {
+      final buffer = await ui.ImmutableBuffer.fromUint8List(originalBytes);
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= maxWidth) {
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      const targetWidth = maxWidth;
+      final targetHeight = (height * targetWidth / width).round();
+      final codec = await descriptor.instantiateCodec(
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+      );
+      final frame = await codec.getNextFrame();
+      final byteData =
+          await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      final resized = byteData.buffer.asUint8List();
+      if (resized.length >= originalBytes.length) {
+        debugPrint(
+          'SCAN_IMAGE fast_downscaled=false reason=larger_payload src_bytes=${originalBytes.length} out_bytes=${resized.length}',
+        );
+        return (bytes: originalBytes, mimeType: 'image/jpeg');
+      }
+      debugPrint(
+        'SCAN_IMAGE fast_downscaled=true source=${width}x$height target=${targetWidth}x$targetHeight src_bytes=${originalBytes.length} out_bytes=${resized.length}',
+      );
+      return (bytes: resized, mimeType: 'image/png');
+    } catch (_) {
+      return (bytes: originalBytes, mimeType: 'image/jpeg');
+    }
+  }
+
+  static String _buildFastPrompt() {
+    return '''
+Extract receipt fields as strict JSON only.
+Schema:
+{"date":"YYYY-MM-DD or null","invoice_number":"string or null","supplier":"string or null","category":"null","category_confidence":"null","vat":"number or null","gross":"number or null","paid_amount":"number or null","net":"number or null","notes":"string or null","extraction_warnings":"array"}
+Rules:
+- Prefer visible invoice labels: Invoice No/Number/Ne/Nr/Inv#/Ref No.
+- Ignore VAT No, Company No, Tel, Route, POD as invoice number.
+- Use UK dates (DD/MM/YYYY -> YYYY-MM-DD).
+- For paid_amount also detect handwritten labels: paid, pd, payd, amt paid, paid cash, paid card (if clearly legible).
+- Notes must be short line-item summary only (example: "milk, bread, eggs"); do not include payment/supplier/date text.
+- Do not classify category in fast mode; set category and category_confidence to null.
+- Return JSON only.
+''';
+  }
+
+  static bool _isFastResultTooSparse(ReceiptData data) {
+    var filled = 0;
+    if (data.date != null) filled++;
+    if ((data.invoiceNumber?.trim().isNotEmpty ?? false)) filled++;
+    if ((data.supplier?.trim().isNotEmpty ?? false)) filled++;
+    if ((data.gross ?? 0) > 0) filled++;
+    return filled < 2;
+  }
+
+  static Future<ReceiptData?> _runFastRetry({
+    required GenerativeModel model,
+    required List<String> categories,
+    required String aiMimeType,
+    required Uint8List aiImageBytes,
+  }) async {
+    try {
+      final retryPrompt = _buildFastPrompt();
+      final response = await model.generateContent([
+        Content.multi([
+          TextPart(retryPrompt),
+          DataPart(aiMimeType, aiImageBytes),
+        ]),
+      ]).timeout(const Duration(seconds: 10));
+      final text = response.text?.trim() ?? '';
+      if (text.isEmpty) return null;
+      final parsed = _parseJsonResponse(text, categories);
+      if (!parsed.success || parsed.data == null) return null;
+      return parsed.data;
+    } catch (_) {
+      return null;
     }
   }
 }

@@ -131,12 +131,6 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
     _modelController.text = model;
   }
 
-  String? _selectedListModel() {
-    final model = _modelController.text.trim();
-    if (_modelOptions.contains(model)) return model;
-    return null;
-  }
-
   String _normalizeModelId(String value) => value.trim();
 
   void _addCurrentModelToList() {
@@ -301,30 +295,11 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
                             ),
                           ),
                           const SizedBox(height: 14),
-                          DropdownButtonFormField<String>(
-                            initialValue: _selectedListModel(),
-                            decoration: const InputDecoration(
-                              labelText: 'Gemini model (from list)',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: _modelOptions
-                                .map(
-                                  (model) => DropdownMenuItem<String>(
-                                    value: model,
-                                    child: Text(model),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) {
-                              if (value != null) _useModel(value);
-                            },
-                          ),
-                          const SizedBox(height: 10),
                           TextField(
                             controller: _modelController,
                             decoration: const InputDecoration(
                               labelText: 'Custom Gemini model (optional)',
-                              hintText: 'e.g. gemini-3.1-pro-preview',
+                              hintText: 'e.g. gemini-2.5-flash-lite',
                               border: OutlineInputBorder(),
                             ),
                           ),
@@ -351,6 +326,9 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
                                   for (var i = 0; i < _modelOptions.length; i++)
                                     ListTile(
                                       dense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 8),
                                       title: Text(_modelOptions[i]),
                                       leading: Icon(
                                         _modelController.text.trim() ==
@@ -359,93 +337,45 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
                                             : Icons.radio_button_off,
                                       ),
                                       onTap: () => _useModel(_modelOptions[i]),
-                                      trailing: SizedBox(
-                                        width: 88,
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.end,
-                                          children: [
-                                            IconButton(
-                                              tooltip: 'Edit',
-                                              onPressed: () => _editModelOption(
-                                                _modelOptions[i],
-                                              ),
-                                              icon: const Icon(Icons.edit),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 32,
+                                              minHeight: 32,
                                             ),
-                                            IconButton(
-                                              tooltip: 'Delete',
-                                              onPressed: () =>
-                                                  _removeModelOption(
-                                                _modelOptions[i],
-                                              ),
-                                              icon: const Icon(Icons.delete),
+                                            padding: EdgeInsets.zero,
+                                            tooltip: 'Edit',
+                                            onPressed: () => _editModelOption(
+                                              _modelOptions[i],
                                             ),
-                                          ],
-                                        ),
+                                            icon: const Icon(Icons.edit,
+                                                size: 20),
+                                          ),
+                                          IconButton(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 32,
+                                              minHeight: 32,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            tooltip: 'Delete',
+                                            onPressed: () => _removeModelOption(
+                                              _modelOptions[i],
+                                            ),
+                                            icon: const Icon(Icons.delete,
+                                                size: 20),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                 ],
                               ),
                             ),
-                          const SizedBox(height: 10),
-                          Text(
-                            'Quick select',
-                            style: Theme.of(context).textTheme.labelLarge,
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              ChoiceChip(
-                                label: const Text('Quick: 3.5 Flash'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-3.5-flash',
-                                onSelected: (_) =>
-                                    _useModel('gemini-3.5-flash'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Complex: 3.1 Pro'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-3.1-pro-preview',
-                                onSelected: (_) =>
-                                    _useModel('gemini-3.1-pro-preview'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Lite: 3.1 Flash-Lite'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-3.1-flash-lite',
-                                onSelected: (_) =>
-                                    _useModel('gemini-3.1-flash-lite'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Legacy: 2.5 Pro'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-2.5-pro',
-                                onSelected: (_) => _useModel('gemini-2.5-pro'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Legacy: 2.5 Flash'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-2.5-flash',
-                                onSelected: (_) =>
-                                    _useModel('gemini-2.5-flash'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Legacy: 1.5 Pro'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-1.5-pro',
-                                onSelected: (_) => _useModel('gemini-1.5-pro'),
-                              ),
-                              ChoiceChip(
-                                label: const Text('Legacy: 1.5 Flash'),
-                                selected: _modelController.text.trim() ==
-                                    'gemini-1.5-flash',
-                                onSelected: (_) =>
-                                    _useModel('gemini-1.5-flash'),
-                              ),
-                            ],
-                          ),
                         ],
                       ),
                     ),
