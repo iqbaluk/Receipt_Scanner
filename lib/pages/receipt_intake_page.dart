@@ -175,6 +175,11 @@ class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
         );
         _selectedPath = savedPath;
       });
+    } catch (_) {
+      _show(
+        'Could not detect document clearly. Retake in better light and keep full page in frame.',
+        true,
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -206,6 +211,11 @@ class _ReceiptIntakePageState extends State<ReceiptIntakePage> {
         );
         _selectedPath = savedPath;
       });
+    } catch (_) {
+      _show(
+        'Could not prepare document image. Try another image with visible edges.',
+        true,
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }

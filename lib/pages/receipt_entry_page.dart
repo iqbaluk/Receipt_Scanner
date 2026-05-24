@@ -246,7 +246,10 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       );
       if (photo != null) await _setImage(photo);
     } catch (e) {
-      _showStatus('Could not access camera: $e', isError: true);
+      _showStatus(
+        'Could not capture document. Retake in better light and keep full page in frame.',
+        isError: true,
+      );
     }
   }
 

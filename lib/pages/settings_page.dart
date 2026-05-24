@@ -11,6 +11,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<CompanyProfile?> _companyProfileFuture =
       DatabaseService.getCompanyProfile();
   PhotoSaveSizeMode _photoSaveSizeMode = PhotoSaveSizeMode.balanced;
+  DocumentEdgeMode _documentEdgeMode = DocumentEdgeMode.auto;
   static const List<String> _monthNames = <String>[
     'January',
     'February',
@@ -35,12 +36,19 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _loadPhotoSaveMode();
+    _loadDocumentEdgeMode();
   }
 
   Future<void> _loadPhotoSaveMode() async {
     final mode = await AppPhotoSaveSettings.getMode();
     if (!mounted) return;
     setState(() => _photoSaveSizeMode = mode);
+  }
+
+  Future<void> _loadDocumentEdgeMode() async {
+    final mode = await AppDocumentCaptureSettings.getMode();
+    if (!mounted) return;
+    setState(() => _documentEdgeMode = mode);
   }
 
   @override
@@ -214,6 +222,18 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _SettingsDivider(),
                 ListTile(
+                  leading: Icon(Icons.crop_free, color: colorScheme.primary),
+                  title: const Text('Document edge mode'),
+                  subtitle: Text(
+                    _documentEdgeMode == DocumentEdgeMode.auto
+                        ? 'Auto (recommended)'
+                        : 'Manual',
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => _pickDocumentEdgeMode(context),
+                ),
+                _SettingsDivider(),
+                ListTile(
                   leading: Icon(Icons.info_outline,
                       color: colorScheme.onSurfaceVariant),
                   title: const Text('About'),
@@ -231,6 +251,60 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _pickDocumentEdgeMode(BuildContext context) async {
+    final selected = await showModalBottomSheet<DocumentEdgeMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Document edge mode',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: Icon(
+                  _documentEdgeMode == DocumentEdgeMode.auto
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text('Auto'),
+                subtitle: const Text('Auto-detect edges and correct angle'),
+                onTap: () => Navigator.pop(ctx, DocumentEdgeMode.auto),
+              ),
+              ListTile(
+                leading: Icon(
+                  _documentEdgeMode == DocumentEdgeMode.manual
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text('Manual'),
+                subtitle:
+                    const Text('Use normal camera/gallery without correction'),
+                onTap: () => Navigator.pop(ctx, DocumentEdgeMode.manual),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected == null || selected == _documentEdgeMode) return;
+    await AppDocumentCaptureSettings.setMode(selected);
+    if (!context.mounted) return;
+    setState(() => _documentEdgeMode = selected);
+    _showMessage(
+      context,
+      selected == DocumentEdgeMode.auto
+          ? 'Document edge mode set to Auto.'
+          : 'Document edge mode set to Manual.',
     );
   }
 

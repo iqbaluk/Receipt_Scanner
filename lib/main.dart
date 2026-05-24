@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -309,26 +310,73 @@ class AppPhotoSaveSettings {
   }
 }
 
+enum DocumentEdgeMode { auto, manual }
+
+class AppDocumentCaptureSettings {
+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  static const String _keyDocumentEdgeMode = 'document_edge_mode';
+
+  static Future<DocumentEdgeMode> getMode() async {
+    final raw = await _storage.read(key: _keyDocumentEdgeMode);
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'manual':
+        return DocumentEdgeMode.manual;
+      case 'auto':
+      default:
+        return DocumentEdgeMode.auto;
+    }
+  }
+
+  static Future<void> setMode(DocumentEdgeMode mode) async {
+    await _storage.write(
+      key: _keyDocumentEdgeMode,
+      value: mode == DocumentEdgeMode.manual ? 'manual' : 'auto',
+    );
+  }
+}
+
 class DocumentCaptureService {
   static Future<XFile?> captureCorrected({
     required bool allowGalleryImport,
   }) async {
+    final started = Stopwatch()..start();
     final mode = await AppPhotoSaveSettings.getMode();
-    final quality = mode == PhotoSaveSizeMode.compact ? 0.60 : 0.75;
+    final edgeMode = await AppDocumentCaptureSettings.getMode();
+    final quality = mode == PhotoSaveSizeMode.compact ? 60 : 75;
+    final width = AppPhotoSaveSettings.maxWidth(mode);
 
-    final paths = await CunningDocumentScanner.getPictures(
-      noOfPages: 1,
-      isGalleryImportAllowed: allowGalleryImport,
-      iosScannerOptions: IosScannerOptions(
-        imageFormat: IosImageFormat.jpg,
-        jpgCompressionQuality: quality,
-      ),
-    );
-
-    if (paths == null || paths.isEmpty) return null;
-    final first = paths.first.trim();
-    if (first.isEmpty) return null;
-    return XFile(first);
+    XFile? result;
+    try {
+      if (edgeMode == DocumentEdgeMode.auto) {
+        final paths = await CunningDocumentScanner.getPictures(
+          noOfPages: 1,
+          isGalleryImportAllowed: allowGalleryImport,
+          iosScannerOptions: IosScannerOptions(
+            imageFormat: IosImageFormat.jpg,
+            jpgCompressionQuality: quality / 100.0,
+          ),
+        );
+        if (paths != null && paths.isNotEmpty) {
+          final first = paths.first.trim();
+          if (first.isNotEmpty) {
+            result = XFile(first);
+          }
+        }
+      } else {
+        final picker = ImagePicker();
+        result = await picker.pickImage(
+          source: allowGalleryImport ? ImageSource.gallery : ImageSource.camera,
+          imageQuality: quality,
+          maxWidth: width,
+        );
+      }
+      return result;
+    } finally {
+      started.stop();
+      debugPrint(
+        'DOC_CAPTURE_MS=${started.elapsedMilliseconds} edge_mode=${edgeMode.name} gallery=$allowGalleryImport',
+      );
+    }
   }
 }
 
